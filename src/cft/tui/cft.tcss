@@ -1,0 +1,38 @@
+Screen {
+    background: $surface;
+}
+
+#page {
+    padding: 1 2;
+    height: 100%;
+}
+
+#summary {
+    border: solid $primary;
+    padding: 1 2;
+    margin-bottom: 1;
+    height: auto;
+}
+
+.summary-row {
+    height: auto;
+}
+
+.label {
+    color: $text-muted;
+    width: 16;
+}
+
+.value {
+    width: 1fr;
+}
+
+#status {
+    color: $warning;
+    height: auto;
+    margin-bottom: 1;
+}
+
+DataTable {
+    height: 1fr;
+}
