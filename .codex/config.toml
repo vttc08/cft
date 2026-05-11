@@ -1,0 +1,13 @@
+[mcp_servers.awslabs_aws_api_mcp_server]
+command = "uvx"
+args = ["awslabs.aws-api-mcp-server@latest"]
+env = { AWS_REGION = "us-east-1" }
+
+[mcp_servers.awslabs_aws_documentation_mcp_server]
+command = "uvx"
+args = ["awslabs.aws-documentation-mcp-server@latest"]
+env = { FASTMCP_LOG_LEVEL = "ERROR", AWS_DOCUMENTATION_PARTITION = "aws", MCP_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36" }
+
+[mcp_servers.aws_knowledge_mcp_server]
+command = "uvx"
+args = ["fastmcp", "run", "https://knowledge-mcp.global.api.aws"]
