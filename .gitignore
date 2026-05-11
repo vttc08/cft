@@ -1,33 +1,17 @@
-.json/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+dist/
+build/
+*.egg-info/
+.python-version
 .env
 .mcp.json
-.copilot/mcp-config.json
-
-# Python
+.copilot/
+.json/
 __pycache__/
-*.py[cod]
+*.pyc
+*.pyo
 *.pyd
-*.so
-.Python
-build/
-dist/
-*.egg-info/
-.eggs/
-.venv/
-venv/
-env/
-
-# Test / lint / type-check caches
-.pytest_cache/
-.coverage
-.coverage.*
-htmlcov/
-.mypy_cache/
-.ruff_cache/
-.tox/
-.nox/
-
-# Notebook / local tooling
-.ipynb_checkpoints/
-.hypothesis/
-.pyre/

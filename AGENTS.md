@@ -147,55 +147,72 @@ Account/Profile
   └── Local computed summaries
 ```
 
-### Suggested Python Package Layout
+### Current Python Package Layout
 
 ```text
-cft/
-  main.py
-  app.py
-  config/
-    paths.py
-    settings.py
-    profiles.py
-  aws/
-    session.py
-    sts.py
-    cloudfront.py
-    cloudwatch.py
-    s3.py
-    logs.py
-  data_exports/
-    manifest.py
-    downloader.py
-    parquet_store.py
-    queries.py
-  cloudfront_logs/
-    cloudwatch_logs.py
-    s3_logs.py
-    parsers.py
-  models/
-    account.py
-    distribution.py
-    usage.py
-    billing.py
-    cache.py
-  tui/
-    screens.py
-    tables.py
-    widgets.py
-  cli/
-    commands.py
-    json_output.py
-  cache/
-    store.py
-    policies.py
-  utils/
-    units.py
-    time.py
-    formatting.py
+src/
+  cft/
+    __init__.py
+    __main__.py
+    main.py
+    config/
+      paths.py
+      settings.py
+      profiles.py
+    aws/
+      session.py
+      sts.py
+      cloudfront.py
+      cloudwatch.py
+      s3.py
+      logs.py
+    data_exports/
+      manifest.py
+      downloader.py
+      parquet_store.py
+      queries.py
+    cloudfront_logs/
+      cloudwatch_logs.py
+      s3_logs.py
+      parsers.py
+    models/
+      account.py
+      distribution.py
+      usage.py
+      billing.py
+      cache.py
+    tui/
+      screens.py
+      tables.py
+      widgets.py
+    cli/
+      commands.py
+      json_output.py
+    cache/
+      store.py
+      policies.py
+    utils/
+      units.py
+      time.py
+      formatting.py
+
+tests/
+  test_cli.py
 ```
 
 This structure is flexible. Keep modules small and testable.
+
+### Local Development Environment
+
+The repo now assumes `uv` for repeatable local setup:
+
+```bash
+uv sync --extra dev
+uv run pytest
+uv run cft --help
+```
+
+Use the editable `src/` layout for all new code so imports match the installed package.
 
 ---
 
