@@ -1,38 +1,180 @@
 Screen {
+    background: $background;
+    color: $text;
+}
+
+Header {
     background: $surface;
+    color: $foreground;
+    border-bottom: solid #3a4047;
+    text-style: bold;
+}
+
+HeaderClock {
+    background: $background;
+    color: $text-muted;
+}
+
+Footer {
+    background: $surface;
+    color: $text-muted;
+    border-top: solid #3a4047;
 }
 
 #page {
+    height: 100%;
     padding: 1 2;
+    background: $background;
+}
+
+#dashboard-scroll {
     height: 100%;
 }
 
-#summary {
-    border: solid $primary;
+.panel {
+    background: $panel;
+    border: solid #3a4047;
+}
+
+#summary-showcase {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#summary-intro,
+#summary-trends,
+#summary-budget {
+    height: auto;
+    background: $panel;
+    border: solid #3a4047;
     padding: 1 2;
     margin-bottom: 1;
-    height: auto;
 }
 
-.summary-row {
+#summary-metrics {
     height: auto;
+    margin-bottom: 1;
 }
 
-.label {
+#summary-visuals {
+    height: auto;
+    margin-bottom: 1;
+}
+
+.summary-card {
+    width: 2fr;
+    height: auto;
+    min-height: 4;
+    margin-right: 1;
+    padding: 0 1;
+}
+
+.summary-card:last-child {
+    margin-right: 0;
+}
+
+.summary-card-label,
+.summary-panel-title {
     color: $text-muted;
-    width: 16;
+    text-style: bold;
+    height: auto;
+    margin-bottom: 1;
 }
 
-.value {
+.summary-card-value {
+    color: $primary;
+    text-style: bold;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.summary-note,
+.summary-detail {
+    color: $foreground;
+    height: auto;
+}
+
+#summary-trends,
+#summary-budget {
     width: 1fr;
+    height: auto;
+    margin-right: 1;
+}
+
+#summary-budget:last-child,
+#summary-trends:last-child {
+    margin-right: 0;
+}
+
+#summary-budget-bar {
+    margin-top: 1;
+}
+
+#table-shell {
+    height: auto;
+    background: $panel;
+    border: solid #3a4047;
+    padding: 0;
+}
+
+#table-heading {
+    height: auto;
+    padding: 0 1;
+    background: $surface;
+    border-bottom: solid #3a4047;
+}
+
+#table-title {
+    width: 1fr;
+    color: $primary;
+    text-style: bold;
+}
+
+#table-subtitle {
+    width: auto;
+    color: $text-muted;
 }
 
 #status {
-    color: $warning;
     height: auto;
-    margin-bottom: 1;
+    color: $warning;
+    background: #2b2416;
+    border-bottom: solid #3c3422;
+    padding: 0 1;
 }
 
 DataTable {
-    height: 1fr;
+    height: auto;
+    background: $panel;
+    color: $foreground;
+    border: none;
+}
+
+DataTable > .datatable--header {
+    background: $surface;
+    color: $text-muted;
+    text-style: bold;
+}
+
+DataTable > .datatable--odd-row {
+    background: $panel;
+}
+
+DataTable > .datatable--even-row {
+    background: #2b3036;
+}
+
+DataTable > .datatable--cursor {
+    background: $primary;
+    color: $foreground;
+    text-style: bold;
+}
+
+DataTable > .datatable--fixed,
+DataTable > .datatable--fixed-cursor,
+DataTable > .datatable--header-cursor,
+DataTable > .datatable--header-hover,
+DataTable > .datatable--hover {
+    background: $primary 30%;
+    color: $foreground;
 }

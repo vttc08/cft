@@ -123,6 +123,10 @@ Favor MVP slices that provide useful CLI behavior and testable service layers be
    - Tables must truncate gracefully and adapt to terminal width.
    - Use Textual + Rich responsive patterns and provide narrow and wide layout test cases.
    - Add visual-mode automated checks where possible, or unit tests that validate layout decisions and string widths.
+   - Treat mouse, tap, drag, and wheel input as optional enhancements only.
+   - Assume Termux over mosh, especially inside tmux, may not deliver mouse events reliably even when `set -g mouse on` is configured.
+   - Every TUI action must be reachable by keyboard: arrow keys for movement, Tab/Shift+Tab for focus traversal, Enter/Space for activation, Escape or `q` for dismissal/back, and explicit key bindings for refresh/configuration actions.
+   - Do not require tapping buttons, dragging scrollbars, hover states, or wheel scrolling for core workflows. Prefer visible focus, keyboard-scrollable containers, and CLI equivalents for automation.
 
 7. **Keep side effects explicit.**
    - Default commands should read cached/local data when possible.
@@ -659,7 +663,8 @@ Columns:
 - `URL`: CloudFront domain, truncatable, minimum 4–6 chars
 - `On`: enabled/deployed state, compact colored marker
 - `Log`: logging enabled/linked state, compact marker
-- `UL/DL`: upload/download GB
+- `Down`: download GB, truncatable, realistic sample values such as `1.234 GB`, `1.2 G`, or `998.9 GB`
+- `Up`: upload GB, truncatable, realistic sample values such as `1.234 GB`, `1.2 G`, or `998.9 GB`
 - `Req`: request count using compact formatting
 
 Formatting examples:
@@ -690,6 +695,31 @@ Clicking/selecting a distribution should open a dismissible detail view with:
 - actions such as enable/disable, refresh, configure logs
 
 Dangerous actions like delete must require confirmation.
+
+### Mobile / Mosh / tmux Interaction Constraints
+
+Mouse support should improve the desktop experience but must not be required.
+
+Observed constraint:
+
+- In Termux on Android, a standard SSH connection may deliver touch gestures as mouse or arrow-key-like terminal input, while mosh can fail to deliver click/scroll gestures through to tmux/Textual. This is outside the Textual app's control if the outer terminal/mosh client does not forward xterm-style mouse reports.
+
+Design implications:
+
+- The primary distribution table interaction is keyboard selection: arrows/PageUp/PageDown/Home/End move, Enter opens details, `r` refreshes, `/` or a focused input filters, Escape/`q` closes transient views.
+- Buttons may exist, but each button action must also have a key binding or focused activation path.
+- Detail screens and long panes must support keyboard scrolling and visible scroll position; do not rely on dragging scrollbars.
+- Mouse/tap handlers should share the same actions as keyboard handlers and may be tested, but tests must cover the keyboard path as the authoritative workflow.
+
+Recommended user environment when mouse input is desired:
+
+```tmux
+set -g mouse on
+set -g history-limit 50000
+set -g default-terminal "tmux-256color"
+```
+
+If mosh still drops touch/mouse events, use standard SSH for mouse-heavy sessions or use mosh with keyboard-first controls. `mosh --no-init` can change local alternate-screen behavior on some terminals, but it is not a reliable fix for complete scrollback or application mouse input.
 
 ---
 
