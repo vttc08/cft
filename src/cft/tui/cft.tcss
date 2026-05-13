@@ -142,6 +142,28 @@ Footer {
     margin-top: 1;
 }
 
+/* Metric progress bars (download/upload/requests) */
+ProgressBar#summary-download-card-bar,
+ProgressBar#summary-upload-card-bar,
+ProgressBar#summary-requests-card-bar {
+    height: 1;
+    margin-top: 0;
+}
+
+/* slightly lighter track to indicate progress background */
+#summary-download-card-bar Bar > .bar--bar,
+#summary-upload-card-bar Bar > .bar--bar,
+#summary-requests-card-bar Bar > .bar--bar {
+    background: $primary 20%;
+}
+
+#summary-download-card-bar Bar > .bar--complete,
+#summary-upload-card-bar Bar > .bar--complete,
+#summary-requests-card-bar Bar > .bar--complete {
+    color: $primary;
+    background: $primary;
+}
+
 #table-shell {
     width: 100%;
     height: auto;

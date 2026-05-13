@@ -4,7 +4,7 @@ import asyncio
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp
-from textual.widgets import Digits
+from textual.widgets import Digits, ProgressBar
 
 
 def cell_text(value: object) -> str:
@@ -89,6 +89,9 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert app.query_one("#summary-cost-prefix").content == "$"
         assert app.query_one("#summary-cost-value", Digits).value == "8.42"
         assert round(app.query_one("#summary-budget-bar").progress, 2) == MOCK_SUMMARY_DATA.budget_progress
+        assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 128.4
+        assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 6.8
+        assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 1_240_000
         assert tuple(app.query_one("#summary-download-trend").data) == MOCK_SUMMARY_DATA.download_trend
         assert tuple(app.query_one("#summary-upload-trend").data) == MOCK_SUMMARY_DATA.upload_trend
         assert app.query_one("#table-title").content == "Distributions"
