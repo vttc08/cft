@@ -41,7 +41,7 @@ Footer {
 #summary-showcase {
     width: 100%;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 #summary-intro,
@@ -84,14 +84,14 @@ Footer {
     color: $text-muted;
     text-style: bold;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .summary-card-value {
     color: $primary;
     text-style: bold;
     height: auto;
-    margin-bottom: 1;
+    margin-bottom: 0;
 }
 
 .summary-cost-display {
@@ -233,6 +233,6 @@ DataTable > .datatable--fixed-cursor,
 DataTable > .datatable--header-cursor,
 DataTable > .datatable--header-hover,
 DataTable > .datatable--hover {
-    background: $primary 30%;
+    background: $primary 36%;
     color: $foreground;
 }
