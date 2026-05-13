@@ -12,7 +12,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
-from textual.widgets import DataTable, Footer, Header, Markdown, ProgressBar, Sparkline, Static
+from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Sparkline, Static
 
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
 from cft.models.distribution import DistributionSummary
@@ -68,7 +68,7 @@ MOCK_SUMMARY_DATA = SummaryPreviewData(
     account_id="123456789012",
     download="128.4 GB",
     upload="6.8 GB",
-    cost="$38.42",
+    cost="$8.42",
     requests="1.24M",
     download_trend=(54, 58, 60, 63, 72, 74, 79, 84, 88, 92, 95, 98),
     upload_trend=(6, 6, 5, 7, 7, 8, 8, 7, 9, 9, 10, 11),
@@ -86,23 +86,8 @@ class SummaryWidgetShowcase(Vertical):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="summary-intro", classes="summary-panel"):
-            yield Markdown(
-                "\n".join(
-                    [
-                        f"# Profile `{self.profile_name}` preview",
-                        "",
-                        "Mock values for the summary area from test data.",
-                        "",
-                        f"- Download: **{self.data.download}**",
-                        f"- Upload: **{self.data.upload}**",
-                        f"- Cost: **{self.data.cost}**",
-                        f"- Requests: **{self.data.requests}**",
-                    ]
-                ),
-                id="summary-markdown",
-            )
             yield Static(
-                f"Account {self.data.account_id} · mock month-to-date usage",
+                f"Profile {self.profile_name} · Account {self.data.account_id}",
                 classes="summary-note",
                 id="summary-note",
             )
@@ -121,16 +106,16 @@ class SummaryWidgetShowcase(Vertical):
                 "summary-upload-value",
             )
             yield self._metric_card(
-                "Cost",
-                self.data.cost,
-                "summary-cost-card",
-                "summary-cost-value",
-            )
-            yield self._metric_card(
                 "Requests",
                 self.data.requests,
                 "summary-requests-card",
                 "summary-requests-value",
+            )
+            yield self._cost_metric_card(
+                "Cost",
+                self.data.cost,
+                "summary-cost-card",
+                "summary-cost-value",
             )
 
         with Horizontal(id="summary-visuals"):
@@ -175,6 +160,23 @@ class SummaryWidgetShowcase(Vertical):
             classes="summary-card panel",
             id=card_id,
         )
+
+    @staticmethod
+    def _cost_metric_card(label: str, value: str, card_id: str, value_id: str) -> Vertical:
+        return Vertical(
+            Static(label, classes="summary-card-label"),
+            Horizontal(
+                Static("$", id="summary-cost-prefix", classes="summary-cost-prefix"),
+                Digits(SummaryWidgetShowcase._cost_digits_text(value), id=value_id, classes="summary-cost-digits"),
+                classes="summary-cost-display",
+            ),
+            classes="summary-card panel",
+            id=card_id,
+        )
+
+    @staticmethod
+    def _cost_digits_text(value: str) -> str:
+        return value.removeprefix("$")
 
 
 class ClickableDataTable(DataTable[str]):

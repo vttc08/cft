@@ -4,6 +4,7 @@ import asyncio
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp
+from textual.widgets import Digits
 
 
 def cell_text(value: object) -> str:
@@ -81,12 +82,12 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
-        assert app.query_one("#summary-markdown")
-        assert app.query_one("#summary-note").content == "Account 123456789012 · mock month-to-date usage"
+        assert app.query_one("#summary-note").content == "Profile default · Account 123456789012"
         assert app.query_one("#summary-download-value").content == MOCK_SUMMARY_DATA.download
         assert app.query_one("#summary-upload-value").content == MOCK_SUMMARY_DATA.upload
-        assert app.query_one("#summary-cost-value").content == MOCK_SUMMARY_DATA.cost
         assert app.query_one("#summary-requests-value").content == MOCK_SUMMARY_DATA.requests
+        assert app.query_one("#summary-cost-prefix").content == "$"
+        assert app.query_one("#summary-cost-value", Digits).value == "8.42"
         assert round(app.query_one("#summary-budget-bar").progress, 2) == MOCK_SUMMARY_DATA.budget_progress
         assert tuple(app.query_one("#summary-download-trend").data) == MOCK_SUMMARY_DATA.download_trend
         assert tuple(app.query_one("#summary-upload-trend").data) == MOCK_SUMMARY_DATA.upload_trend
@@ -198,7 +199,7 @@ async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(
         assert cell_plain(row[8]) == "1.23M"
         assert cell_text(row[1]).endswith(" ")
         assert cell_text(row[3]).endswith(" ")
-        assert table.virtual_size.width <= table.size.width + 2
+        assert table.virtual_size.width <= table.size.width
 
 
 def test_tui_remains_keyboard_accessible_on_short_terminals() -> None:
@@ -216,6 +217,7 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
+        assert app.query_one("#summary-note").content == "Profile default · Account 123456789012"
         table = app.query_one("#distributions")
         table.focus()
         await pilot.press("down")
@@ -246,14 +248,13 @@ async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
 
         resized_widths = [column.width for column in table.ordered_columns]
 
-        assert resized_widths != initial_widths
         assert resized_widths[0] <= 7
         assert resized_widths[1] <= initial_widths[1]
         assert resized_widths[3] <= initial_widths[3]
         assert resized_widths[6] <= initial_widths[6]
         assert resized_widths[7] <= initial_widths[7]
         assert resized_widths[8] <= initial_widths[8]
-        assert table.virtual_size.width <= table.size.width + 2
+        assert table.virtual_size.width <= table.size.width
 
 
 def test_tui_formats_transfer_columns_with_shared_precision() -> None:

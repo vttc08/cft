@@ -22,12 +22,14 @@ Footer {
 }
 
 #page {
+    width: 100%;
     height: 100%;
-    padding: 1 2;
+    padding: 1 1;
     background: $background;
 }
 
 #dashboard-scroll {
+    width: 1fr;
     height: 100%;
 }
 
@@ -37,6 +39,7 @@ Footer {
 }
 
 #summary-showcase {
+    width: 100%;
     height: auto;
     margin-bottom: 1;
 }
@@ -44,19 +47,22 @@ Footer {
 #summary-intro,
 #summary-trends,
 #summary-budget {
+    width: 100%;
     height: auto;
     background: $panel;
     border: solid #3a4047;
-    padding: 1 2;
+    padding: 0 2;
     margin-bottom: 1;
 }
 
 #summary-metrics {
+    width: 100%;
     height: auto;
     margin-bottom: 1;
 }
 
 #summary-visuals {
+    width: 100%;
     height: auto;
     margin-bottom: 1;
 }
@@ -88,10 +94,36 @@ Footer {
     margin-bottom: 1;
 }
 
+.summary-cost-display {
+    width: 100%;
+    height: auto;
+    content-align: center middle;
+}
+
+.summary-cost-prefix,
+.summary-cost-digits {
+    color: $primary;
+    text-style: bold;
+    height: auto;
+}
+
+.summary-cost-prefix {
+    width: auto;
+    margin-right: 1;
+}
+
+.summary-cost-digits {
+    width: auto;
+}
+
 .summary-note,
 .summary-detail {
     color: $foreground;
     height: auto;
+}
+
+.summary-note {
+    text-style: bold;
 }
 
 #summary-trends,
@@ -111,6 +143,7 @@ Footer {
 }
 
 #table-shell {
+    width: 100%;
     height: auto;
     background: $panel;
     border: solid #3a4047;
@@ -118,6 +151,7 @@ Footer {
 }
 
 #table-heading {
+    width: 100%;
     height: auto;
     padding: 0 1;
     background: $surface;
@@ -136,6 +170,7 @@ Footer {
 }
 
 #status {
+    width: 100%;
     height: auto;
     color: $warning;
     background: #2b2416;
@@ -144,6 +179,7 @@ Footer {
 }
 
 DataTable {
+    width: 100%;
     height: auto;
     background: $panel;
     color: $foreground;
