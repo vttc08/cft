@@ -146,8 +146,15 @@ Footer {
 ProgressBar#summary-download-card-bar,
 ProgressBar#summary-upload-card-bar,
 ProgressBar#summary-requests-card-bar {
+    width: 100%;
     height: 1;
     margin-top: 0;
+}
+
+ProgressBar#summary-download-card-bar > Bar,
+ProgressBar#summary-upload-card-bar > Bar,
+ProgressBar#summary-requests-card-bar > Bar {
+    width: 1fr;
 }
 
 /* slightly lighter track to indicate progress background */

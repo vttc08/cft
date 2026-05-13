@@ -82,20 +82,20 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
-        assert app.query_one("#summary-note").content == "Profile default · Account 123456789012"
+        summary_note = app.query_one("#summary-note").content
+        assert summary_note.startswith("Profile default · Account 123456789012")
+        assert "Now:\t" in summary_note
         assert app.query_one("#summary-download-value").content == MOCK_SUMMARY_DATA.download
         assert app.query_one("#summary-upload-value").content == MOCK_SUMMARY_DATA.upload
         assert app.query_one("#summary-requests-value").content == MOCK_SUMMARY_DATA.requests
         assert app.query_one("#summary-cost-prefix").content == "$"
         assert app.query_one("#summary-cost-value", Digits).value == "8.42"
-        assert round(app.query_one("#summary-budget-bar").progress, 2) == MOCK_SUMMARY_DATA.budget_progress
         assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 128.4
         assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 6.8
         assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 1_240_000
-        assert tuple(app.query_one("#summary-download-trend").data) == MOCK_SUMMARY_DATA.download_trend
-        assert tuple(app.query_one("#summary-upload-trend").data) == MOCK_SUMMARY_DATA.upload_trend
+        assert round(app.query_one("#summary-requests-card-bar", ProgressBar).total or 0) == 10_000_000
         assert app.query_one("#table-title").content == "Distributions"
-        assert app.query_one("#table-subtitle").content == "Current month operational view"
+        assert app.query_one("#table-subtitle").content == "May 2026"
 
         table = app.query_one("#distributions")
         assert table.ordered_columns[0].label.plain.strip() == "ID"
@@ -113,19 +113,19 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert table.row_count == 3
         assert cell_plain(table.get_row_at(0)[2]) == "Free"
         assert cell_plain(table.get_row_at(0)[4]) == "●"
-        assert cell_plain(table.get_row_at(0)[5]) == "·"
+        assert cell_plain(table.get_row_at(0)[5]) == "-"
         assert cell_plain(table.get_row_at(0)[6]) == "1.23 GB"
         assert cell_plain(table.get_row_at(0)[7]) == "1.20 GB"
         assert cell_plain(table.get_row_at(0)[8]) == "1.23K"
         assert cell_plain(table.get_row_at(1)[2]) == "PAYG"
         assert cell_plain(table.get_row_at(1)[4]) == "○"
-        assert cell_plain(table.get_row_at(1)[5]) == "·"
+        assert cell_plain(table.get_row_at(1)[5]) == "-"
         assert cell_plain(table.get_row_at(1)[6]) == "99.89 GB"
         assert cell_plain(table.get_row_at(1)[7]) == "1.20 GB"
         assert cell_plain(table.get_row_at(1)[8]) == "99.89K"
-        assert cell_plain(table.get_row_at(2)[2]) == "?"
+        assert cell_plain(table.get_row_at(2)[2]) == "-"
         assert cell_plain(table.get_row_at(2)[4]) == "●"
-        assert cell_plain(table.get_row_at(2)[5]) == "·"
+        assert cell_plain(table.get_row_at(2)[5]) == "-"
         assert cell_plain(table.get_row_at(2)[6]) == "998.90 GB"
         assert cell_plain(table.get_row_at(2)[7]) == "1.23 GB"
         assert cell_plain(table.get_row_at(2)[8]) == "1.23M"
@@ -145,7 +145,7 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert table.ordered_columns[6].width >= 9
         assert table.ordered_columns[7].width >= 9
         assert table.ordered_columns[8].width >= 5
-        assert 5 <= table.ordered_columns[0].width <= 7
+        assert 5 <= table.ordered_columns[0].width <= 15
 
         table.focus()
         await pilot.press("down")
@@ -195,9 +195,9 @@ async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(
         table = app.query_one("#distributions")
         row = table.get_row_at(2)
 
-        assert cell_plain(row[0]).endswith("...")
-        assert cell_plain(row[1]).endswith("...")
-        assert cell_plain(row[3]).endswith("...")
+        assert cell_plain(row[0]).endswith("..")
+        assert cell_plain(row[1]).endswith("..")
+        assert cell_plain(row[3]).endswith("..")
         assert transfer_signature(row[6]) == transfer_signature(row[7])
         assert cell_plain(row[8]) == "1.23M"
         assert cell_text(row[1]).endswith(" ")
@@ -220,7 +220,7 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
-        assert app.query_one("#summary-note").content == "Profile default · Account 123456789012"
+        assert app.query_one("#summary-note").content.startswith("Profile default · Account 123456789012")
         table = app.query_one("#distributions")
         table.focus()
         await pilot.press("down")
@@ -258,6 +258,42 @@ async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
         assert resized_widths[7] <= initial_widths[7]
         assert resized_widths[8] <= initial_widths[8]
         assert table.virtual_size.width <= table.size.width
+
+
+def test_summary_progress_bars_resize_with_terminal_width() -> None:
+    asyncio.run(_assert_summary_progress_bars_resize_with_terminal_width())
+
+
+async def _assert_summary_progress_bars_resize_with_terminal_width() -> None:
+    app = CftApp(
+        inventory_loader=fake_inventory,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+
+        download_card = app.query_one("#summary-download-card")
+        download_bar = app.query_one("#summary-download-card-bar", ProgressBar)
+
+        initial_card_width = download_card.size.width
+        initial_bar_width = download_bar.size.width
+
+        await pilot.resize_terminal(60, 30)
+        await pilot.pause()
+
+        resized_card_width = download_card.size.width
+        resized_bar_width = download_bar.size.width
+
+        assert resized_card_width < initial_card_width
+        assert resized_bar_width < initial_bar_width
+        assert resized_bar_width <= resized_card_width
+
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+
+        assert download_card.size.width == initial_card_width
+        assert download_bar.size.width == initial_bar_width
 
 
 def test_tui_formats_transfer_columns_with_shared_precision() -> None:

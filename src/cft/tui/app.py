@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
 from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Sparkline, Static
+from textual.widgets._progress_bar import Bar
 
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
 from cft.models.distribution import DistributionSummary
@@ -104,7 +105,7 @@ Now:\t{datetime.now():%Y-%m-%d %H:%M:%S}",
                 self.data.requests,
                 "summary-requests-card",
                 "summary-requests-value",
-                capacity_requests=20_000_000,
+                capacity_requests=10_000_000,
             )
             yield self._cost_metric_card(
                 "Cost",
@@ -142,10 +143,24 @@ Now:\t{datetime.now():%Y-%m-%d %H:%M:%S}",
         children: list[object] = [Static(label, classes="summary-card-label")]
         if capacity_gb is not None:
             # progress bar for sizes uses GB units
-            children.append(ProgressBar(total=capacity_gb, show_eta=False, id=f"{card_id}-bar"))
+            children.append(
+                ResponsiveProgressBar(
+                    total=capacity_gb,
+                    show_eta=False,
+                    show_percentage=False,
+                    id=f"{card_id}-bar",
+                )
+            )
             children.append(Static(value, id=value_id, classes="summary-card-value"))
         elif capacity_requests is not None:
-            children.append(ProgressBar(total=capacity_requests, show_eta=False, id=f"{card_id}-bar"))
+            children.append(
+                ResponsiveProgressBar(
+                    total=capacity_requests,
+                    show_eta=False,
+                    show_percentage=False,
+                    id=f"{card_id}-bar",
+                )
+            )
             children.append(Static(value, id=value_id, classes="summary-card-value"))
         else:
             children.append(Static(value, id=value_id, classes="summary-card-value"))
@@ -194,6 +209,21 @@ class ClickableDataTable(DataTable[str]):
             return
 
         self._post_selected_message()
+
+
+class ResponsiveProgressBar(ProgressBar):
+    """ProgressBar variant that re-quantizes the bar fill after widget resizes."""
+
+    def on_resize(self, event: events.Resize) -> None:
+        if not self.show_bar:
+            return
+        try:
+            bar = self.query_one("#bar", Bar)
+        except Exception:
+            return
+        bar.percentage = self.percentage
+        bar.gradient = self.gradient
+        bar.refresh()
 
 
 TABLE_COLUMNS: tuple[TableColumnSpec, ...] = (
