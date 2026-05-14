@@ -14,7 +14,7 @@ from cft.cache.policies import (
 )
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
-from cft.config.settings import AppSettings, load_app_settings
+from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import ProfileCacheState
 from cft.models.distribution import DistributionSummary, normalize_distribution
 
@@ -59,7 +59,7 @@ class CloudFrontInventoryService:
 
     def load(self, *, refresh: bool = False) -> CloudFrontInventory:
         settings = self.settings or load_app_settings(
-            self.paths, profile_name=self.profile_name
+            self.paths, profile_name=settings_profile_name(self.profile_name)
         )
         session = self.session_factory(
             profile_name=self.profile_name,

@@ -76,15 +76,25 @@ Footer {
     margin-bottom: 0;
 }
 
+#summary-top-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 1;
+}
+
 #summary-intro,
 #summary-trends,
-#summary-budget {
-    width: 100%;
+#summary-budget,
+#summary-cur-export {
+    width: 1fr;
     height: auto;
     background: $panel;
     border: solid #3a4047;
-    padding: 0 2;
-    margin-bottom: 1;
+    padding: 0 1;
+}
+
+#summary-intro {
+    margin-right: 1;
 }
 
 #summary-metrics {
@@ -156,6 +166,33 @@ Footer {
 
 .summary-note {
     text-style: bold;
+}
+
+#summary-cur-export-title {
+    margin-bottom: 0;
+}
+
+#summary-cur-export-bucket {
+    color: $primary;
+}
+
+#summary-cur-export-detail {
+    color: $text-muted;
+    margin-bottom: 0;
+}
+
+.link-button {
+    width: auto;
+    height: auto;
+    padding: 0;
+    margin-top: 0;
+    color: $primary;
+    text-style: underline;
+}
+
+.link-button:hover,
+.link-button:focus {
+    background: $primary 18%;
 }
 
 #summary-trends,
@@ -237,6 +274,66 @@ ProgressBar#summary-requests-card-bar > Bar {
     background: #2b2416;
     border-bottom: solid #3c3422;
     padding: 0 1;
+}
+
+#cur-export-modal {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    background: #00000066;
+}
+
+#cur-export-dialog {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+}
+
+#cur-export-title {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#cur-export-error {
+    color: $error;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.cur-export-label {
+    color: $text-muted;
+    text-style: bold;
+    margin-top: 1;
+}
+
+#cur-export-bucket-list {
+    height: 10;
+    border: solid #3a4047;
+    margin-bottom: 1;
+}
+
+#cur-export-empty {
+    color: $text-muted;
+    border: solid #3a4047;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+#cur-export-prefix,
+#cur-export-export-name {
+    width: 100%;
+}
+
+#cur-export-actions {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
+
+#cur-export-actions Button {
+    margin-right: 1;
 }
 
 DataTable {

@@ -5,7 +5,12 @@ from datetime import datetime, timedelta, timezone
 from cft.cache.policies import CachePolicy, format_utc_datetime, parse_utc_datetime
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, profile_key
-from cft.config.settings import load_app_settings
+from cft.config.settings import (
+    display_data_export_prefix,
+    load_app_settings,
+    normalize_data_export_prefix,
+    save_data_export_settings,
+)
 from cft.models.cache import (
     DistributionCacheRecord,
     ProfileCacheState,
@@ -72,6 +77,38 @@ export_name = "profile-export"
     assert settings.data_export.bucket == "profile-bucket"
     assert settings.data_export.prefix == "profile-prefix"
     assert settings.data_export.export_name == "profile-export"
+
+
+def test_save_data_export_settings_writes_profile_file_and_round_trips(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+
+    save_data_export_settings(
+        paths=paths,
+        profile_name="dev",
+        bucket="example-bucket",
+        prefix="/",
+        export_name="cur-export",
+    )
+
+    settings = load_app_settings(paths, profile_name="dev", create=False)
+    profile_text = paths.profile_config_file("dev").read_text(encoding="utf-8")
+
+    assert 'bucket = "example-bucket"' in profile_text
+    assert 'prefix = ""' in profile_text
+    assert 'export_name = "cur-export"' in profile_text
+    assert settings.data_export.bucket == "example-bucket"
+    assert settings.data_export.prefix is None
+    assert settings.data_export.export_name == "cur-export"
+
+
+def test_data_export_prefix_helpers_normalize_and_display_root() -> None:
+    assert normalize_data_export_prefix(None) is None
+    assert normalize_data_export_prefix("") is None
+    assert normalize_data_export_prefix("/") is None
+    assert normalize_data_export_prefix("/exports/monthly/") == "exports/monthly"
+    assert display_data_export_prefix(None) == "/"
+    assert display_data_export_prefix("/") == "/"
+    assert display_data_export_prefix("exports/monthly") == "/exports/monthly"
 
 
 def test_json_file_store_round_trips_cache_payload(tmp_path) -> None:

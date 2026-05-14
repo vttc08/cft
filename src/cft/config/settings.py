@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import tomlkit
+from tomlkit.items import Table
 
 from cft.config.paths import AppPaths
 
@@ -96,13 +97,57 @@ def load_app_settings(
     if create and profile_config_file is not None and not profile_config_file.exists():
         profile_config_file.write_text(default_profile_config_text(), encoding="utf-8")
 
-    if not paths.config_file.exists():
-        return AppSettings()
-
-    mapping = tomlkit.parse(paths.config_file.read_text(encoding="utf-8")).unwrap()
+    mapping: dict[str, Any] = {}
+    if paths.config_file.exists():
+        mapping = tomlkit.parse(paths.config_file.read_text(encoding="utf-8")).unwrap()
     if profile_config_file is not None and profile_config_file.exists():
         mapping = _merge_mappings(mapping, tomlkit.parse(profile_config_file.read_text(encoding="utf-8")).unwrap())
     return AppSettings.from_mapping(mapping)
+
+
+def settings_profile_name(profile_name: str | None) -> str:
+    return (profile_name or "default").strip() or "default"
+
+
+def normalize_data_export_prefix(prefix: str | None) -> str | None:
+    if prefix is None:
+        return None
+    text = str(prefix).strip()
+    if not text or text == "/":
+        return None
+    return text.strip("/")
+
+
+def display_data_export_prefix(prefix: str | None) -> str:
+    normalized = normalize_data_export_prefix(prefix)
+    return f"/{normalized}" if normalized else "/"
+
+
+def save_data_export_settings(
+    *,
+    bucket: str,
+    export_name: str,
+    prefix: str | None = None,
+    paths: AppPaths | None = None,
+    profile_name: str | None = None,
+) -> None:
+    if paths is None:
+        from cft.config.paths import get_app_paths
+
+        paths = get_app_paths()
+
+    profile_name = settings_profile_name(profile_name)
+    paths.ensure_base_dirs()
+    target = paths.profile_config_file(profile_name)
+    if not target.exists():
+        target.write_text(default_profile_config_text(), encoding="utf-8")
+
+    document = tomlkit.parse(target.read_text(encoding="utf-8"))
+    data_export = _ensure_table(document, "data_export")
+    data_export["bucket"] = bucket.strip()
+    data_export["prefix"] = normalize_data_export_prefix(prefix) or ""
+    data_export["export_name"] = export_name.strip()
+    target.write_text(tomlkit.dumps(document), encoding="utf-8")
 
 
 def default_config_text() -> str:
@@ -179,3 +224,13 @@ def _merge_mappings(base: dict[str, Any], override: dict[str, Any]) -> dict[str,
         else:
             merged[key] = value
     return merged
+
+
+def _ensure_table(document: Any, key: str) -> Table:
+    table = document.get(key)
+    if isinstance(table, Table):
+        return table
+
+    new_table = tomlkit.table()
+    document[key] = new_table
+    return new_table

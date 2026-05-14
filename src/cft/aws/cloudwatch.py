@@ -9,7 +9,7 @@ import boto3
 from cft.cache.policies import CachePolicy, utc_now
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
-from cft.config.settings import AppSettings, load_app_settings
+from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceMetrics
 
 from .cloudfront import CloudFrontInventory
@@ -57,7 +57,7 @@ class CloudFrontUsageService:
         refresh: bool = False,
     ) -> CloudFrontUsageSnapshot:
         settings = self.settings or load_app_settings(
-            self.paths, profile_name=inventory.profile_name
+            self.paths, profile_name=settings_profile_name(inventory.profile_name)
         )
         session = self.session_factory(
             profile_name=inventory.profile_name,

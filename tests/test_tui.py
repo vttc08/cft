@@ -3,10 +3,11 @@ import asyncio
 import threading
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
+from cft.config.paths import AppPaths
 from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
-from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp, SummaryWidgetShowcase
-from textual.widgets import Digits, ProgressBar
+from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
+from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar
 
 
 def cell_text(value: object) -> str:
@@ -91,12 +92,17 @@ async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) ->
     raise AssertionError("dashboard did not finish loading")
 
 
-def test_tui_renders_summary_and_distribution_table() -> None:
-    asyncio.run(_assert_tui_renders_summary_and_distribution_table())
+def make_app(tmp_path, **kwargs) -> CftApp:
+    return CftApp(paths=AppPaths.from_base(tmp_path / "cft"), **kwargs)
 
 
-async def _assert_tui_renders_summary_and_distribution_table() -> None:
-    app = CftApp(
+def test_tui_renders_summary_and_distribution_table(tmp_path) -> None:
+    asyncio.run(_assert_tui_renders_summary_and_distribution_table(tmp_path))
+
+
+async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -109,8 +115,14 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
         summary_note = app.query_one("#summary-note").content
-        assert summary_note.startswith("Profile default · Account 123456789012")
-        assert "Now:\t" in summary_note
+        assert summary_note.startswith("Profile dev · Account 123456789012")
+        assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
+        assert app.query_one("#summary-last-updated").content == "Last updated: -"
+        cur_export_link = app.query_one("#summary-cur-export-action", Link)
+        assert app.query_one("#summary-cur-export-title").content == "CUR Export"
+        assert app.query_one("#summary-cur-export-bucket").content == "Not configured"
+        assert app.query_one("#summary-cur-export-detail").content == "Path: / · Export: -"
+        assert cur_export_link.content == "Setup Data Export"
         assert app.query_one("#summary-download-value").content == "128.4 GB"
         assert app.query_one("#summary-upload-value").content == "6.8 GB"
         assert app.query_one("#summary-requests-value").content == "1.24M"
@@ -178,11 +190,11 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
 
 
-def test_tui_shows_loading_panel_while_refreshing_data() -> None:
-    asyncio.run(_assert_tui_shows_loading_panel_while_refreshing_data())
+def test_tui_shows_loading_panel_while_refreshing_data(tmp_path) -> None:
+    asyncio.run(_assert_tui_shows_loading_panel_while_refreshing_data(tmp_path))
 
 
-async def _assert_tui_shows_loading_panel_while_refreshing_data() -> None:
+async def _assert_tui_shows_loading_panel_while_refreshing_data(tmp_path) -> None:
     gate = threading.Event()
 
     def slow_inventory_loader() -> CloudFrontInventory:
@@ -192,7 +204,8 @@ async def _assert_tui_shows_loading_panel_while_refreshing_data() -> None:
     def slow_usage_loader(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
         return fake_usage(fake_inventory())
 
-    app = CftApp(
+    app = make_app(
+        tmp_path,
         inventory_loader=slow_inventory_loader,
         usage_loader=slow_usage_loader,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -218,12 +231,13 @@ async def _assert_tui_shows_loading_panel_while_refreshing_data() -> None:
         assert app.query_one("#distributions").row_count == 3
 
 
-def test_tui_uses_custom_aws_theme() -> None:
-    asyncio.run(_assert_tui_uses_custom_aws_theme())
+def test_tui_uses_custom_aws_theme(tmp_path) -> None:
+    asyncio.run(_assert_tui_uses_custom_aws_theme(tmp_path))
 
 
-async def _assert_tui_uses_custom_aws_theme() -> None:
-    app = CftApp(
+async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -234,7 +248,7 @@ async def _assert_tui_uses_custom_aws_theme() -> None:
         await wait_for_dashboard_ready(app, pilot)
 
         assert app.theme == CFT_AWS_THEME.name
-        assert {binding[0] for binding in app.BINDINGS} == {"r", "q", "ctrl+q", "ctrl+c"}
+        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -244,12 +258,13 @@ async def _assert_tui_uses_custom_aws_theme() -> None:
         assert active_theme.surface == "#1F2329"
 
 
-def test_tui_truncates_long_distribution_fields_to_fit_narrow_terminal() -> None:
-    asyncio.run(_assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal())
+def test_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(tmp_path) -> None:
+    asyncio.run(_assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(tmp_path))
 
 
-async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal() -> None:
-    app = CftApp(
+async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -273,12 +288,13 @@ async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(
         assert table.virtual_size.width <= table.size.width
 
 
-def test_tui_remains_keyboard_accessible_on_short_terminals() -> None:
-    asyncio.run(_assert_tui_remains_keyboard_accessible_on_short_terminals())
+def test_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -> None:
+    asyncio.run(_assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path))
 
 
-async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
-    app = CftApp(
+async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -290,7 +306,9 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
-        assert app.query_one("#summary-note").content.startswith("Profile default · Account 123456789012")
+        assert app.query_one("#summary-note").content == "dev · 123456789012"
+        assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
+        assert app.query_one("#summary-last-updated").content == "Last updated: -"
         table = app.query_one("#distributions")
         table.focus()
         await pilot.press("down")
@@ -300,11 +318,11 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
         assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
 
 
-def test_tui_refresh_action_reloads_usage_data() -> None:
-    asyncio.run(_assert_tui_refresh_action_reloads_usage_data())
+def test_tui_refresh_action_reloads_usage_data(tmp_path) -> None:
+    asyncio.run(_assert_tui_refresh_action_reloads_usage_data(tmp_path))
 
 
-async def _assert_tui_refresh_action_reloads_usage_data() -> None:
+async def _assert_tui_refresh_action_reloads_usage_data(tmp_path) -> None:
     inventory_calls = {"count": 0}
     usage_calls = {"count": 0}
     notifications: list[tuple[str, str | None]] = []
@@ -327,7 +345,8 @@ async def _assert_tui_refresh_action_reloads_usage_data() -> None:
             ),
         }
 
-    app = CftApp(
+    app = make_app(
+        tmp_path,
         inventory_loader=inventory_loader,
         usage_loader=usage_loader,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -359,12 +378,13 @@ async def _assert_tui_refresh_action_reloads_usage_data() -> None:
         assert notifications[-1][0].startswith("Refreshed CloudWatch usage at ")
 
 
-def test_tui_recomputes_column_widths_after_terminal_resize() -> None:
-    asyncio.run(_assert_tui_recomputes_column_widths_after_terminal_resize())
+def test_tui_recomputes_column_widths_after_terminal_resize(tmp_path) -> None:
+    asyncio.run(_assert_tui_recomputes_column_widths_after_terminal_resize(tmp_path))
 
 
-async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
-    app = CftApp(
+async def _assert_tui_recomputes_column_widths_after_terminal_resize(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -391,12 +411,13 @@ async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
         assert table.virtual_size.width <= table.size.width
 
 
-def test_summary_progress_bars_resize_with_terminal_width() -> None:
-    asyncio.run(_assert_summary_progress_bars_resize_with_terminal_width())
+def test_summary_progress_bars_resize_with_terminal_width(tmp_path) -> None:
+    asyncio.run(_assert_summary_progress_bars_resize_with_terminal_width(tmp_path))
 
 
-async def _assert_summary_progress_bars_resize_with_terminal_width() -> None:
-    app = CftApp(
+async def _assert_summary_progress_bars_resize_with_terminal_width(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
@@ -453,3 +474,158 @@ def test_tui_formats_request_counts_compactly() -> None:
 def test_tui_formats_summary_transfer_values_from_bytes() -> None:
     assert SummaryWidgetShowcase._format_summary_transfer(128_400_000_000) == "128.4 GB"
     assert SummaryWidgetShowcase._format_summary_transfer(6_800_000_000.0) == "6.8 GB"
+
+
+def test_tui_shows_configured_cur_export_status(tmp_path) -> None:
+    asyncio.run(_assert_tui_shows_configured_cur_export_status(tmp_path))
+
+
+async def _assert_tui_shows_configured_cur_export_status(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    paths.ensure_base_dirs()
+    paths.profile_config_file("dev").write_text(
+        """
+[data_export]
+bucket = "billing-bucket"
+prefix = "exports"
+export_name = "cloudfront-cur"
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = make_app(
+        tmp_path,
+        profile_name="dev",
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        cur_export_link = app.query_one("#summary-cur-export-action", Link)
+        assert app.query_one("#summary-cur-export-title").content == "CUR Export"
+        assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
+        assert app.query_one("#summary-cur-export-detail").content == (
+            "Path: /exports · Export: cloudfront-cur"
+        )
+        assert cur_export_link.content == "Edit Data Export"
+
+
+def test_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None:
+    asyncio.run(_assert_tui_cur_export_setup_flow_persists_selection(tmp_path))
+
+
+async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    app = make_app(
+        tmp_path,
+        profile_name="dev",
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        bucket_loader=lambda: ("alpha-bucket", "billing-bucket", "zeta-bucket"),
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        summary_button = app.query_one("#summary-cur-export-action", Link)
+        summary_button.focus()
+        await pilot.press("b")
+        await pilot.pause()
+
+        bucket_list = app.screen.query_one("#cur-export-bucket-list", ListView)
+        assert bucket_list.index == 0
+
+        await pilot.press("down")
+        await pilot.press("tab")
+        await pilot.pause()
+
+        export_name = app.screen.query_one("#cur-export-export-name", Input)
+        export_name.value = "cloudfront-cur"
+        await pilot.press("shift+tab")
+        prefix = app.screen.query_one("#cur-export-prefix", Input)
+        prefix.value = "/exports/root/"
+        await pilot.press("tab")
+        await pilot.press("tab")
+        await pilot.pause()
+
+        save_button = app.screen.query_one("#cur-export-save", Button)
+        assert not save_button.disabled
+        await pilot.click("#cur-export-save")
+        await pilot.pause()
+
+        profile_text = paths.profile_config_file("dev").read_text(encoding="utf-8")
+        assert 'bucket = "billing-bucket"' in profile_text
+        assert 'prefix = "exports/root"' in profile_text
+        assert 'export_name = "cloudfront-cur"' in profile_text
+        cur_export_link = app.query_one("#summary-cur-export-action", Link)
+        assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
+        assert app.query_one("#summary-cur-export-detail").content == (
+            "Path: /exports/root · Export: cloudfront-cur"
+        )
+        assert cur_export_link.content == "Edit Data Export"
+        assert app.query_one("#status").content == (
+            "Linked CUR export bucket billing-bucket for profile dev."
+        )
+
+
+def test_summary_widget_truncation_stages_are_consistent() -> None:
+    widget = SummaryWidgetShowcase(
+        profile_name="dev",
+        data=SummaryPreviewData(
+            profile_name="dev",
+            account_id="123456789012",
+            download_bytes=0,
+            upload_bytes=0,
+            cost=0,
+            requests=0,
+        ),
+        account_id="123456789012",
+    )
+    timestamp = datetime(2026, 5, 11, 9, 30)
+
+    assert widget._format_profile_account_line(80) == "Profile dev · Account 123456789012"
+    assert widget._format_profile_account_line(18) == "dev · 123456789012"
+    assert widget._format_timestamp_line("Now", timestamp, 80) == "Now: 2026-05-11 09:30:00"
+    assert widget._format_timestamp_line("Now", timestamp, 11) == "05-11 09:30"
+    assert widget._format_timestamp_line("Now", timestamp, 8) == "09:30:00"
+    widget.cur_export_status = CurExportStatus(
+        bucket="billing-bucket",
+        prefix="exports",
+        export_name="cloudfront-cur",
+    )
+    assert widget._format_cur_export_bucket(80) == "billing-bucket"
+    assert widget._format_cur_export_detail(80) == "Path: /exports · Export: cloudfront-cur"
+    assert widget._format_cur_export_detail(25) == "/exports · cloudfront-cur"
+
+
+def test_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path) -> None:
+    asyncio.run(_assert_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path))
+
+
+async def _assert_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        profile_name="dev",
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        bucket_loader=lambda: (_ for _ in ()).throw(RuntimeError("AccessDenied")),
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        await pilot.press("b")
+        await pilot.pause()
+
+        assert app.screen.query_one("#cur-export-error").content == "Bucket discovery failed: AccessDenied"
+        assert app.screen.query_one("#cur-export-empty").content == "No S3 buckets available for this profile."
+        assert app.screen.query_one("#cur-export-save", Button).disabled
