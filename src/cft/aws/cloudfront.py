@@ -65,14 +65,7 @@ class CloudFrontInventoryService:
             profile_name=self.profile_name,
             region_name=self.region_name or settings.aws.cloudfront_region,
         )
-        profile_name = (
-            session.profile_name
-            or self.profile_name
-            or settings.aws.default_profile
-            or "default"
-        )
-        if self.settings is None and profile_name != self.profile_name:
-            settings = load_app_settings(self.paths, profile_name=profile_name)
+        profile_name = session.profile_name or self.profile_name or "default"
         self.paths.ensure_profile_dirs(profile_name)
 
         cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))

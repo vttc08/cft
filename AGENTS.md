@@ -261,10 +261,10 @@ Do not copy or store AWS access keys inside `~/.cft`.
 
 Suggested `state.json` shape could mirror how data is displayed in the TUI
 ```json
-{"schema_version":1,"profile_name":"default","last_updated":"2023-10-01T00:00:00Z","profile":{"download":1000,"upload":500,"requests":100,"cost":12.34,"last_updated":"2023-10-01T00:00:00Z"},"distributions":{"E123":{"type":"PAYG","inventory":{"comment":"site"},"s3":{"download":500,"upload":0,"requests":25,"last_updated":"2023-10-01T00:00:00Z"},"cwl":{"download":0,"upload":50,"requests":10,"last_updated":"2023-10-01T00:00:00Z"}}}}
+{"schema_version":1,"profile_name":"default","last_updated":"2023-10-01T00:00:00Z","profile":{"download":1000,"upload":500,"requests":100,"cost":12.34,"last_updated":"2023-10-01T00:00:00Z"},"distributions":{"E123":{"type":"PAYG","inventory":{"comment":"site"},"cw":{"download":500,"requests":25,"last_updated":"2023-10-01T00:00:00Z","month_key":"2023-10"},"s3":{"download":500,"upload":0,"requests":25,"last_updated":"2023-10-01T00:00:00Z"},"cwl":{"download":0,"upload":50,"requests":10,"last_updated":"2023-10-01T00:00:00Z"}}}}
 ```
 
-Per distribution, keep source-specific buckets (`s3` and `cwl`) so one source can be empty without changing schema shape. Keep only the fields needed for summary and display in cache; leave large CloudFront metadata in runtime unless it affects the UI.
+Per distribution, keep source-specific buckets (`cw`, `s3`, and `cwl`) so one source can be empty without changing schema shape. Use `cw` for CloudWatch metric cache from `get_metric_statistics`; keep `cwl` for CloudWatch Logs results that require log group setup. Keep only the fields needed for summary and display in cache; leave large CloudFront metadata in runtime unless it affects the UI.
 
 ## AWS Profiles and Sessions
 

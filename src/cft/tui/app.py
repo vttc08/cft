@@ -15,10 +15,13 @@ from textual.theme import Theme
 from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Static
 from textual.widgets._progress_bar import Bar
 
+from cft.aws.cloudwatch import CloudFrontUsageService
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
+from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 
 InventoryLoader = Callable[[], CloudFrontInventory]
+UsageLoader = Callable[[CloudFrontInventory], dict[str, SourceMetrics]]
 T = TypeVar("T")
 
 @dataclass(frozen=True)
@@ -259,7 +262,11 @@ TRANSFER_PLACEHOLDERS: tuple[tuple[int, int], ...] = (
     (99_890_000_000, 1_200_000_000),
     (998_900_000_000, 1_234_000_000),
 )
-REQUEST_PLACEHOLDERS: tuple[int, ...] = (1_234, 99_890, 1_234_000)
+TRANSFER_FORMAT_SAMPLES: tuple[int, ...] = (
+    1_234_000_000,
+    99_890_000_000,
+    998_900_000_000,
+)
 
 CFT_AWS_THEME = Theme(
     name="cft-aws",
@@ -287,7 +294,12 @@ class CftApp(App[None]):
 
     TITLE = "cft"
     SUB_TITLE = "CloudFront distribution browser"
-    BINDINGS = [("q", "quit", "Quit"), ("ctrl+q", "quit", "Quit"), ("ctrl+c", "quit", "Quit")]
+    BINDINGS = [
+        ("r", "refresh", "Refresh"),
+        ("q", "quit", "Quit"),
+        ("ctrl+q", "quit", "Quit"),
+        ("ctrl+c", "quit", "Quit"),
+    ]
     CSS_PATH = Path(__file__).with_name("cft.tcss")
 
     def __init__(
@@ -295,6 +307,7 @@ class CftApp(App[None]):
         *,
         profile_name: str | None = None,
         inventory_loader: InventoryLoader | None = None,
+        usage_loader: UsageLoader | None = None,
         now: Callable[[], datetime] = datetime.now,
         watch_css: bool = False,
     ) -> None:
@@ -302,11 +315,16 @@ class CftApp(App[None]):
         self.register_theme(CFT_AWS_THEME)
         self.theme = CFT_AWS_THEME.name
         self.profile_name = profile_name
-        self.inventory_loader = inventory_loader or CloudFrontInventoryService(
-            profile_name=profile_name
-        ).load
+        self._inventory_service = CloudFrontInventoryService(profile_name=profile_name)
+        self._usage_service = CloudFrontUsageService(profile_name=profile_name)
+        self._inventory_loader_is_default = inventory_loader is None
+        self._usage_loader_is_default = usage_loader is None
+        self.inventory_loader = inventory_loader or self._inventory_service.load
+        self.usage_loader = usage_loader or self._default_usage_loader
         self.now = now
         self.inventory: CloudFrontInventory | None = None
+        self.usage_by_distribution: dict[str, SourceMetrics] = {}
+        self._last_usage_snapshot: object | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -327,13 +345,10 @@ class CftApp(App[None]):
         yield Footer()
 
     def on_mount(self) -> None:
-        try:
-            self.inventory = self.inventory_loader()
-        except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
-            self.query_one("#status", Static).update(f"AWS inventory unavailable: {error}")
-            return
+        self._load_data(refresh=False)
 
-        self._refresh_distribution_table()
+    def action_refresh(self) -> None:
+        self._load_data(refresh=True)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         distribution = self._distribution_for_key(event.row_key.value)
@@ -350,6 +365,53 @@ class CftApp(App[None]):
         super()._check_resize()
         if self.inventory is not None:
             self._refresh_distribution_table()
+
+    def _load_data(self, *, refresh: bool) -> None:
+        try:
+            self.inventory = self._load_inventory(refresh=refresh)
+        except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
+            self.query_one("#status", Static).update(f"AWS inventory unavailable: {error}")
+            return
+
+        try:
+            self.usage_by_distribution = self._load_usage(self.inventory, refresh=refresh)
+        except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
+            self.usage_by_distribution = {}
+            self.query_one("#status", Static).update(f"CloudWatch usage unavailable: {error}")
+            return
+
+        self._refresh_distribution_table()
+        if refresh and self._refresh_succeeded():
+            refreshed_at = self.now().strftime("%H:%M:%S")
+            message = f"Refreshed CloudWatch usage at {refreshed_at}"
+            self.query_one("#status", Static).update(message)
+            self.notify(message, title="cft refresh", severity="information", timeout=2.5)
+
+    def _load_inventory(self, *, refresh: bool) -> CloudFrontInventory:
+        if self._inventory_loader_is_default:
+            return self._inventory_service.load(refresh=refresh)
+        return self.inventory_loader()
+
+    def _load_usage(
+        self,
+        inventory: CloudFrontInventory,
+        *,
+        refresh: bool,
+    ) -> dict[str, SourceMetrics]:
+        if self._usage_loader_is_default:
+            snapshot = self._usage_service.load(inventory, refresh=refresh)
+            self._last_usage_snapshot = snapshot
+            return snapshot.usage_by_distribution
+        self._last_usage_snapshot = None
+        return self.usage_loader(inventory)
+
+    def _refresh_succeeded(self) -> bool:
+        inventory_refreshed = not bool(getattr(self.inventory, "from_cache", False))
+        usage_snapshot = self._last_usage_snapshot
+        usage_refreshed = True
+        if usage_snapshot is not None:
+            usage_refreshed = not bool(getattr(usage_snapshot, "from_cache", False))
+        return inventory_refreshed and usage_refreshed
 
     def _refresh_distribution_table(self) -> None:
         if self.inventory is None:
@@ -393,14 +455,14 @@ class CftApp(App[None]):
         self.query_one("#status", Static).update("")
         column_map = {column.spec.key: column for column in columns}
         transfer_spec = self._resolve_transfer_format(
-            TRANSFER_PLACEHOLDERS,
+            TRANSFER_FORMAT_SAMPLES,
             width=min(
                 column_map["down"].visible_width,
                 column_map["up"].visible_width,
             ),
         )
         for index, distribution in enumerate(distributions):
-            down_bytes, up_bytes = self._demo_value(TRANSFER_PLACEHOLDERS, index)
+            usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
             table.add_row(
                 self._render_column_value(
                     column_map["dist"], distribution.distribution_id or "-"
@@ -419,15 +481,17 @@ class CftApp(App[None]):
                 ),
                 self._render_column_value(column_map["log"], self._log_status_marker()),
                 self._render_column_value(
-                    column_map["down"], self._format_transfer_value(down_bytes, transfer_spec)
+                    column_map["down"],
+                    self._format_transfer_cell(usage.download, transfer_spec),
                 ),
                 self._render_column_value(
-                    column_map["up"], self._format_transfer_value(up_bytes, transfer_spec)
+                    column_map["up"],
+                    self._format_transfer_cell(usage.upload, transfer_spec),
                 ),
                 self._render_column_value(
                     column_map["req"],
-                    self._format_request_count(
-                        self._demo_value(REQUEST_PLACEHOLDERS, index),
+                    self._format_request_cell(
+                        usage.requests,
                         width=column_map["req"].visible_width,
                     ),
                 ),
@@ -550,12 +614,8 @@ class CftApp(App[None]):
         return values[index % len(values)]
 
     @staticmethod
-    def _resolve_transfer_format(
-        values: tuple[tuple[int, int], ...],
-        *,
-        width: int,
-    ) -> TransferFormatSpec:
-        largest = max(max(pair) for pair in values)
+    def _resolve_transfer_format(values: tuple[int, ...], *, width: int) -> TransferFormatSpec:
+        largest = max(values)
         for suffix in (" GB", " G"):
             for decimals in (2, 1, 0):
                 rendered = CftApp._format_transfer_value(
@@ -579,6 +639,15 @@ class CftApp(App[None]):
         else:
             number = f"{quantized:.{spec.decimals}f}"
         return f"{number}{spec.suffix}"
+
+    @staticmethod
+    def _format_transfer_cell(
+        value_bytes: int | float | None,
+        spec: TransferFormatSpec,
+    ) -> str:
+        if value_bytes is None:
+            return "-"
+        return CftApp._format_transfer_value(value_bytes, spec)
 
     @staticmethod
     def _format_request_count(value: int | float, *, width: int) -> str:
@@ -606,6 +675,12 @@ class CftApp(App[None]):
         return CftApp._format_compact_number(scaled, 0, "T")
 
     @staticmethod
+    def _format_request_cell(value: int | float | None, *, width: int) -> str:
+        if value is None:
+            return "-"
+        return CftApp._format_request_count(value, width=width)
+
+    @staticmethod
     def _format_compact_number(value: Decimal, decimals: int, suffix: str) -> str:
         quantized = value.quantize(
             Decimal(1).scaleb(-decimals),
@@ -616,6 +691,10 @@ class CftApp(App[None]):
         else:
             number = f"{quantized:.{decimals}f}"
         return f"{number}{suffix}"
+
+    def _default_usage_loader(self, inventory: CloudFrontInventory) -> dict[str, SourceMetrics]:
+        snapshot = CloudFrontUsageService(profile_name=inventory.profile_name).load(inventory)
+        return snapshot.usage_by_distribution
 
 def run_tui(profile_name: str | None = None, *, watch_css: bool = False) -> None:
     CftApp(profile_name=profile_name, watch_css=watch_css).run()

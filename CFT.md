@@ -59,10 +59,11 @@ aws cloudwatch get-metric-statistics  \
 	--metric-name BytesDownloaded \
 	--dimensions Name=DistributionId,Value=<DIST_ID_HERE> Name=Region,Value=Global \
 	--start-time 2026-04-01T00:00:00Z --end-time 2026-05-01T00:00:00Z
-	--period 86400 --statistics Sum --region us-east-1
+	--period 3600 --statistics Sum --region us-east-1
 ```
 
-- other metrics include `Requests, BytesDownloaded, BytesUploaded, TotalErrorRate, 4xxErrorRate, 5xxErrorRate`, but only `BytesDownloaded` would be useful
+- other metrics include `Requests, BytesDownloaded, BytesUploaded, TotalErrorRate, 4xxErrorRate, 5xxErrorRate`
+- for the TUI table, use `BytesDownloaded` and `Requests`; keep upload as a placeholder because `BytesUploaded` is not reliable enough for WebSocket traffic
 - this example sets the time frame to monthly (same as AWS billing cycle)
 - `period` defined in second is how long each datapoints include, 86400 for daily, use 3000000 which can cover the entire month
 
@@ -80,6 +81,7 @@ Return type
 ```
 
 - best option is to set the `period` high for monthly statistics, unless granular stats are needed, otherwise all values must be summed
+- use hourly buckets (`period=3600`) for month-to-date queries so CloudWatch stays under the 1440 datapoint limit
 
 It's not possible to get `BytesUploaded` accurately for WebSocket endpoints, S3/CW logging is needed. This will be an optional feature and only if user configured standard
 
@@ -268,6 +270,7 @@ For each distribution:
    - Query CloudWatch from start to now.
 - After querying: Set last_updated = now. Update cached upload value. Return upload value.
 Note: the same algorithm can also be applied for CloudWatch metrics `cloudwatch get-metric-statistics` for other metrics, with keys for each.
+- In `state.json`, store CloudWatch metric cache under `cw` for each distribution. Keep `cwl` reserved for CloudWatch Logs uploads and other log-derived values that require extra user setup.
 
 S3 + Parquet
 Compared to CloudWatch, `time` and `date` fields are nessecary for S3, however, the `DistributionId` is optional since the logs are separated by it in S3.

@@ -2,6 +2,7 @@ from datetime import datetime
 import asyncio
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
+from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp, SummaryWidgetShowcase
 from textual.widgets import Digits, ProgressBar
@@ -67,6 +68,18 @@ def fake_inventory() -> CloudFrontInventory:
     )
 
 
+def fake_usage(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
+    return {
+        "E123": SourceMetrics(download=1_234_000_000, requests=1_234, month_key="2026-05"),
+        "E4567890": SourceMetrics(download=99_890_000_000, requests=99_890, month_key="2026-05"),
+        "E1234567890ABCDEFGHIJKL": SourceMetrics(
+            download=998_900_000_000,
+            requests=1_234_000,
+            month_key="2026-05",
+        ),
+    }
+
+
 def test_tui_renders_summary_and_distribution_table() -> None:
     asyncio.run(_assert_tui_renders_summary_and_distribution_table())
 
@@ -74,6 +87,7 @@ def test_tui_renders_summary_and_distribution_table() -> None:
 async def _assert_tui_renders_summary_and_distribution_table() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -115,28 +129,25 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert cell_plain(table.get_row_at(0)[4]) == "●"
         assert cell_plain(table.get_row_at(0)[5]) == "-"
         assert cell_plain(table.get_row_at(0)[6]) == "1.23 GB"
-        assert cell_plain(table.get_row_at(0)[7]) == "1.20 GB"
+        assert cell_plain(table.get_row_at(0)[7]) == "-"
         assert cell_plain(table.get_row_at(0)[8]) == "1.23K"
         assert cell_plain(table.get_row_at(1)[2]) == "PAYG"
         assert cell_plain(table.get_row_at(1)[4]) == "○"
         assert cell_plain(table.get_row_at(1)[5]) == "-"
         assert cell_plain(table.get_row_at(1)[6]) == "99.89 GB"
-        assert cell_plain(table.get_row_at(1)[7]) == "1.20 GB"
+        assert cell_plain(table.get_row_at(1)[7]) == "-"
         assert cell_plain(table.get_row_at(1)[8]) == "99.89K"
         assert cell_plain(table.get_row_at(2)[2]) == "-"
         assert cell_plain(table.get_row_at(2)[4]) == "●"
         assert cell_plain(table.get_row_at(2)[5]) == "-"
         assert cell_plain(table.get_row_at(2)[6]) == "998.90 GB"
-        assert cell_plain(table.get_row_at(2)[7]) == "1.23 GB"
+        assert cell_plain(table.get_row_at(2)[7]) == "-"
         assert cell_plain(table.get_row_at(2)[8]) == "1.23M"
         assert len(cell_plain(table.get_row_at(0)[4])) == 1
         assert len(cell_plain(table.get_row_at(0)[5])) == 1
         assert transfer_signature(table.get_row_at(0)[6]) == ("GB", 2)
-        assert transfer_signature(table.get_row_at(0)[7]) == ("GB", 2)
         assert transfer_signature(table.get_row_at(1)[6]) == ("GB", 2)
-        assert transfer_signature(table.get_row_at(1)[7]) == ("GB", 2)
         assert transfer_signature(table.get_row_at(2)[6]) == ("GB", 2)
-        assert transfer_signature(table.get_row_at(2)[7]) == ("GB", 2)
         assert cell_text(table.get_row_at(1)[7]).startswith(" ")
         assert cell_text(table.get_row_at(2)[7]).startswith(" ")
         assert cell_text(table.get_row_at(0)[6]).endswith(" ")
@@ -162,6 +173,7 @@ def test_tui_uses_custom_aws_theme() -> None:
 async def _assert_tui_uses_custom_aws_theme() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -169,7 +181,7 @@ async def _assert_tui_uses_custom_aws_theme() -> None:
         await pilot.pause()
 
         assert app.theme == CFT_AWS_THEME.name
-        assert {binding[0] for binding in app.BINDINGS} == {"q", "ctrl+q", "ctrl+c"}
+        assert {binding[0] for binding in app.BINDINGS} == {"r", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -186,6 +198,7 @@ def test_tui_truncates_long_distribution_fields_to_fit_narrow_terminal() -> None
 async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -198,7 +211,8 @@ async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(
         assert cell_plain(row[0]).endswith("..")
         assert cell_plain(row[1]).endswith("..")
         assert cell_plain(row[3]).endswith("..")
-        assert transfer_signature(row[6]) == transfer_signature(row[7])
+        assert transfer_signature(row[6])[0] in {"GB", "G"}
+        assert cell_plain(row[7]) == "-"
         assert cell_plain(row[8]) == "1.23M"
         assert cell_text(row[1]).endswith(" ")
         assert cell_text(row[3]).endswith(" ")
@@ -212,6 +226,7 @@ def test_tui_remains_keyboard_accessible_on_short_terminals() -> None:
 async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -230,6 +245,61 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
         assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
 
 
+def test_tui_refresh_action_reloads_usage_data() -> None:
+    asyncio.run(_assert_tui_refresh_action_reloads_usage_data())
+
+
+async def _assert_tui_refresh_action_reloads_usage_data() -> None:
+    inventory_calls = {"count": 0}
+    usage_calls = {"count": 0}
+    notifications: list[tuple[str, str | None]] = []
+
+    def inventory_loader() -> CloudFrontInventory:
+        inventory_calls["count"] += 1
+        return fake_inventory()
+
+    def usage_loader(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
+        usage_calls["count"] += 1
+        if usage_calls["count"] == 1:
+            return fake_usage(fake_inventory())
+        return {
+            "E123": SourceMetrics(download=2_000_000_000, requests=2_000, month_key="2026-05"),
+            "E4567890": SourceMetrics(download=3_000_000_000, requests=3_000, month_key="2026-05"),
+            "E1234567890ABCDEFGHIJKL": SourceMetrics(
+                download=4_000_000_000,
+                requests=4_000,
+                month_key="2026-05",
+            ),
+        }
+
+    app = CftApp(
+        inventory_loader=inventory_loader,
+        usage_loader=usage_loader,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+    app.notify = lambda message, *, title=None, severity=None, timeout=None: notifications.append(  # type: ignore[assignment]
+        (message, title)
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+
+        table = app.query_one("#distributions")
+        assert cell_plain(table.get_row_at(0)[6]) == "1.23 GB"
+        assert inventory_calls["count"] == 1
+        assert usage_calls["count"] == 1
+
+        await pilot.press("r")
+        await pilot.pause()
+
+        assert inventory_calls["count"] == 2
+        assert usage_calls["count"] == 2
+        assert cell_plain(table.get_row_at(0)[6]) == "2.00 GB"
+        assert cell_plain(table.get_row_at(1)[6]) == "3.00 GB"
+        assert notifications
+        assert notifications[-1][0].startswith("Refreshed CloudWatch usage at ")
+
+
 def test_tui_recomputes_column_widths_after_terminal_resize() -> None:
     asyncio.run(_assert_tui_recomputes_column_widths_after_terminal_resize())
 
@@ -237,6 +307,7 @@ def test_tui_recomputes_column_widths_after_terminal_resize() -> None:
 async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -267,6 +338,7 @@ def test_summary_progress_bars_resize_with_terminal_width() -> None:
 async def _assert_summary_progress_bars_resize_with_terminal_width() -> None:
     app = CftApp(
         inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -298,7 +370,7 @@ async def _assert_summary_progress_bars_resize_with_terminal_width() -> None:
 
 def test_tui_formats_transfer_columns_with_shared_precision() -> None:
     spec = CftApp._resolve_transfer_format(
-        ((1_234_000_000, 1_200_000_000), (99_890_000_000, 1_200_000_000), (998_900_000_000, 1_234_000_000)),
+        (1_234_000_000, 99_890_000_000, 998_900_000_000),
         width=9,
     )
     assert spec.suffix == " GB"

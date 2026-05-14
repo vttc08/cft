@@ -42,6 +42,7 @@ class SourceMetrics:
     upload: int | None = None
     requests: int | None = None
     last_updated: datetime | None = None
+    month_key: str | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> SourceMetrics:
@@ -53,6 +54,7 @@ class SourceMetrics:
             upload=_int_or_none(payload.get("upload") or payload.get("bytes_uploaded")),
             requests=_int_or_none(payload.get("requests")),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
+            month_key=_string_or_none(payload.get("month_key")),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -64,6 +66,7 @@ class SourceMetrics:
                 "last_updated": (
                     format_utc_datetime(self.last_updated) if self.last_updated else None
                 ),
+                "month_key": self.month_key,
             }
         )
 
@@ -119,6 +122,7 @@ class DistributionCacheRecord:
     distribution_id: str
     type: str = "unknown"
     inventory: dict[str, Any] = field(default_factory=dict)
+    cw: SourceMetrics = field(default_factory=SourceMetrics)
     s3: SourceMetrics = field(default_factory=SourceMetrics)
     cwl: SourceMetrics = field(default_factory=SourceMetrics)
     last_updated: datetime | None = None
@@ -133,13 +137,15 @@ class DistributionCacheRecord:
             inventory = {
                 key: value
                 for key, value in payload.items()
-                if key not in {"distribution_id", "type", "inventory", "s3", "cwl", "last_updated"}
+                if key
+                not in {"distribution_id", "type", "inventory", "cw", "s3", "cwl", "last_updated"}
             }
 
         return cls(
             distribution_id=str(payload.get("distribution_id") or distribution_id),
             type=_string_or_none(payload.get("type")) or "unknown",
             inventory=inventory,
+            cw=SourceMetrics.from_payload(payload.get("cw")),
             s3=SourceMetrics.from_payload(payload.get("s3")),
             cwl=SourceMetrics.from_payload(payload.get("cwl")),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
@@ -150,6 +156,7 @@ class DistributionCacheRecord:
             "distribution_id": self.distribution_id,
             "type": self.type,
             "inventory": self.inventory,
+            "cw": self.cw.to_payload(),
             "s3": self.s3.to_payload(),
             "cwl": self.cwl.to_payload(),
         }

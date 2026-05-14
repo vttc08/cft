@@ -3,7 +3,7 @@ import json
 
 from cft.aws.cloudfront import CloudFrontInventoryService
 from cft.config.paths import AppPaths
-from cft.config.settings import AppSettings, CacheSettings
+from cft.config.settings import AppSettings, AwsSettings, CacheSettings
 
 
 class FakePaginator:
@@ -105,6 +105,28 @@ def test_cloudfront_inventory_service_writes_and_reads_fresh_cache(tmp_path) -> 
     assert cached_inventory.identity is not None
     assert cached_inventory.identity.account_id == "123456789012"
     assert cached_inventory.distributions[0].distribution_id == "E123"
+
+
+def test_cloudfront_inventory_service_prefers_aws_default_profile_when_profile_is_unspecified(
+    tmp_path,
+) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    settings = AppSettings(aws=AwsSettings(default_profile="custom"), cache=CacheSettings())
+
+    class DefaultSession(FakeSession):
+        profile_name = None
+
+    service = CloudFrontInventoryService(
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: DefaultSession(),  # type: ignore[arg-type]
+        now=lambda: datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
+    )
+
+    inventory = service.load()
+
+    assert inventory.profile_name == "default"
+    assert paths.profile_state_file("default").exists()
 
 
 def test_cloudfront_inventory_service_refreshes_stale_cache(tmp_path) -> None:

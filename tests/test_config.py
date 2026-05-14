@@ -102,6 +102,12 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
                 distribution_id="E123",
                 type="PAYG",
                 inventory={"comment": "site"},
+                cw=SourceMetrics(
+                    download=7,
+                    requests=8,
+                    last_updated=datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
+                    month_key="2026-05",
+                ),
                 s3=SourceMetrics(download=10, upload=11, requests=12),
                 cwl=SourceMetrics(download=13, upload=14, requests=15),
             )
@@ -114,6 +120,8 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     assert round_tripped.profile_name == "dev"
     assert round_tripped.profile.cost == 4.5
     assert round_tripped.distributions["E123"].type == "PAYG"
+    assert round_tripped.distributions["E123"].cw.download == 7
+    assert round_tripped.distributions["E123"].cw.month_key == "2026-05"
     assert round_tripped.distributions["E123"].s3.download == 10
     assert round_tripped.distributions["E123"].cwl.requests == 15
 
