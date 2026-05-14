@@ -294,3 +294,74 @@ def test_cloudfront_usage_service_falls_back_to_cached_values_on_cloudwatch_erro
 
     assert snapshot.usage_by_distribution["E123"].download == 100
     assert snapshot.usage_by_distribution["E123"].requests == 10
+
+
+def test_cloudfront_usage_service_refreshes_incomplete_current_month_cache(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(usage_ttl_seconds=3600))
+    paths.profile_state_file("dev").parent.mkdir(parents=True, exist_ok=True)
+    paths.profile_state_file("dev").write_text(
+        json.dumps(
+            {
+                "profile_name": "dev",
+                "distributions": {
+                    "E123": {
+                        "cw": {
+                            "requests": 10,
+                            "last_updated": "2026-05-13T11:00:00Z",
+                            "month_key": "2026-05",
+                        }
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    client, stubber = cloudwatch_client()
+    stubber.add_response(
+        "get_metric_statistics",
+        {"Label": "BytesDownloaded", "Datapoints": [{"Timestamp": now, "Sum": 50.0}]},
+        {
+            "Namespace": "AWS/CloudFront",
+            "MetricName": "BytesDownloaded",
+            "Dimensions": [
+                {"Name": "DistributionId", "Value": "E123"},
+                {"Name": "Region", "Value": "Global"},
+            ],
+            "StartTime": datetime(2026, 5, 1, 0, 0, tzinfo=timezone.utc),
+            "EndTime": now,
+            "Period": 3600,
+            "Statistics": ["Sum"],
+        },
+    )
+    stubber.add_response(
+        "get_metric_statistics",
+        {"Label": "Requests", "Datapoints": [{"Timestamp": now, "Sum": 5.0}]},
+        {
+            "Namespace": "AWS/CloudFront",
+            "MetricName": "Requests",
+            "Dimensions": [
+                {"Name": "DistributionId", "Value": "E123"},
+                {"Name": "Region", "Value": "Global"},
+            ],
+            "StartTime": datetime(2026, 5, 13, 11, 0, tzinfo=timezone.utc),
+            "EndTime": now,
+            "Period": 3600,
+            "Statistics": ["Sum"],
+        },
+    )
+
+    with stubber:
+        snapshot = CloudFrontUsageService(
+            profile_name="dev",
+            paths=paths,
+            settings=settings,
+            session_factory=lambda **_: StubSession(client),  # type: ignore[arg-type]
+            now=lambda: now,
+        ).load(fake_inventory())
+
+    assert snapshot.usage_by_distribution["E123"].download == 50
+    assert snapshot.usage_by_distribution["E123"].requests == 15

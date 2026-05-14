@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
@@ -12,6 +13,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
+from textual import work
 from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Static
 from textual.widgets._progress_bar import Bar
 
@@ -324,12 +326,15 @@ class CftApp(App[None]):
         self.now = now
         self.inventory: CloudFrontInventory | None = None
         self.usage_by_distribution: dict[str, SourceMetrics] = {}
-        self._last_usage_snapshot: object | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
         with Container(id="page"):
-            with VerticalScroll(id="dashboard-scroll"):
+            with Vertical(id="loading-panel", classes="panel"):
+                yield Static("Loading CloudFront data...", id="loading-title")
+                yield ProgressBar(id="loading-progress")
+                yield Static("Preparing AWS session...", id="loading-status")
+            with VerticalScroll(id="dashboard-scroll", classes="hidden"):
                 yield SummaryWidgetShowcase(profile_name=self.profile_name or "default")
                 with Vertical(id="table-shell"):
                     with Horizontal(id="table-heading"):
@@ -344,11 +349,13 @@ class CftApp(App[None]):
                     )
         yield Footer()
 
-    def on_mount(self) -> None:
-        self._load_data(refresh=False)
+    @work(exclusive=True)
+    async def on_mount(self) -> None:
+        await self._load_data(refresh=False)
 
-    def action_refresh(self) -> None:
-        self._load_data(refresh=True)
+    @work(exclusive=True)
+    async def action_refresh(self) -> None:
+        await self._load_data(refresh=True)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         distribution = self._distribution_for_key(event.row_key.value)
@@ -366,22 +373,31 @@ class CftApp(App[None]):
         if self.inventory is not None:
             self._refresh_distribution_table()
 
-    def _load_data(self, *, refresh: bool) -> None:
+    async def _load_data(self, *, refresh: bool) -> None:
+        self._set_loading_state(True, "Loading CloudFront inventory...")
         try:
-            self.inventory = self._load_inventory(refresh=refresh)
+            self.inventory = await asyncio.to_thread(self._load_inventory, refresh=refresh)
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
             self.query_one("#status", Static).update(f"AWS inventory unavailable: {error}")
+            self._set_loading_state(False, f"AWS inventory unavailable: {error}")
             return
 
         try:
-            self.usage_by_distribution = self._load_usage(self.inventory, refresh=refresh)
+            self._set_loading_state(True, "Loading CloudWatch usage...")
+            self.usage_by_distribution = await asyncio.to_thread(
+                self._load_usage,
+                self.inventory,
+                refresh=refresh,
+            )
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
             self.usage_by_distribution = {}
             self.query_one("#status", Static).update(f"CloudWatch usage unavailable: {error}")
+            self._set_loading_state(False, f"CloudWatch usage unavailable: {error}")
             return
 
         self._refresh_distribution_table()
-        if refresh and self._refresh_succeeded():
+        self._set_loading_state(False, f"Loaded CloudFront data at {self.now():%H:%M:%S}")
+        if refresh:
             refreshed_at = self.now().strftime("%H:%M:%S")
             message = f"Refreshed CloudWatch usage at {refreshed_at}"
             self.query_one("#status", Static).update(message)
@@ -400,18 +416,21 @@ class CftApp(App[None]):
     ) -> dict[str, SourceMetrics]:
         if self._usage_loader_is_default:
             snapshot = self._usage_service.load(inventory, refresh=refresh)
-            self._last_usage_snapshot = snapshot
             return snapshot.usage_by_distribution
-        self._last_usage_snapshot = None
         return self.usage_loader(inventory)
 
-    def _refresh_succeeded(self) -> bool:
-        inventory_refreshed = not bool(getattr(self.inventory, "from_cache", False))
-        usage_snapshot = self._last_usage_snapshot
-        usage_refreshed = True
-        if usage_snapshot is not None:
-            usage_refreshed = not bool(getattr(usage_snapshot, "from_cache", False))
-        return inventory_refreshed and usage_refreshed
+    def _set_loading_state(self, loading: bool, message: str) -> None:
+        loading_panel = self.query_one("#loading-panel", Vertical)
+        dashboard = self.query_one("#dashboard-scroll", VerticalScroll)
+        status = self.query_one("#loading-status", Static)
+        status.update(message)
+        if loading:
+            loading_panel.remove_class("hidden")
+            dashboard.add_class("hidden")
+            self.query_one("#loading-progress", ProgressBar).update(total=None, progress=0)
+        else:
+            loading_panel.add_class("hidden")
+            dashboard.remove_class("hidden")
 
     def _refresh_distribution_table(self) -> None:
         if self.inventory is None:

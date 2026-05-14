@@ -1,5 +1,6 @@
 from datetime import datetime
 import asyncio
+import threading
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.models.cache import SourceMetrics
@@ -80,6 +81,16 @@ def fake_usage(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
     }
 
 
+async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) -> None:
+    for _ in range(attempts):
+        dashboard = app.query_one("#dashboard-scroll")
+        table = app.query_one("#distributions")
+        if not dashboard.has_class("hidden") and table.row_count == 3 and table.ordered_columns:
+            return
+        await pilot.pause()
+    raise AssertionError("dashboard did not finish loading")
+
+
 def test_tui_renders_summary_and_distribution_table() -> None:
     asyncio.run(_assert_tui_renders_summary_and_distribution_table())
 
@@ -93,6 +104,7 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
@@ -166,6 +178,46 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
 
 
+def test_tui_shows_loading_panel_while_refreshing_data() -> None:
+    asyncio.run(_assert_tui_shows_loading_panel_while_refreshing_data())
+
+
+async def _assert_tui_shows_loading_panel_while_refreshing_data() -> None:
+    gate = threading.Event()
+
+    def slow_inventory_loader() -> CloudFrontInventory:
+        gate.wait(timeout=3)
+        return fake_inventory()
+
+    def slow_usage_loader(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
+        return fake_usage(fake_inventory())
+
+    app = CftApp(
+        inventory_loader=slow_inventory_loader,
+        usage_loader=slow_usage_loader,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+
+        loading_panel = app.query_one("#loading-panel")
+        dashboard = app.query_one("#dashboard-scroll")
+
+        assert not loading_panel.has_class("hidden")
+        assert dashboard.has_class("hidden")
+
+        gate.set()
+        for _ in range(20):
+            await pilot.pause()
+            if loading_panel.has_class("hidden") and not dashboard.has_class("hidden"):
+                break
+
+        assert loading_panel.has_class("hidden")
+        assert not dashboard.has_class("hidden")
+        assert app.query_one("#distributions").row_count == 3
+
+
 def test_tui_uses_custom_aws_theme() -> None:
     asyncio.run(_assert_tui_uses_custom_aws_theme())
 
@@ -179,6 +231,7 @@ async def _assert_tui_uses_custom_aws_theme() -> None:
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         assert app.theme == CFT_AWS_THEME.name
         assert {binding[0] for binding in app.BINDINGS} == {"r", "q", "ctrl+q", "ctrl+c"}
@@ -204,6 +257,7 @@ async def _assert_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(
 
     async with app.run_test(size=(60, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         table = app.query_one("#distributions")
         row = table.get_row_at(2)
@@ -232,6 +286,7 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals() -> None:
 
     async with app.run_test(size=(80, 14)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
@@ -283,6 +338,7 @@ async def _assert_tui_refresh_action_reloads_usage_data() -> None:
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         table = app.query_one("#distributions")
         assert cell_plain(table.get_row_at(0)[6]) == "1.23 GB"
@@ -290,7 +346,10 @@ async def _assert_tui_refresh_action_reloads_usage_data() -> None:
         assert usage_calls["count"] == 1
 
         await pilot.press("r")
-        await pilot.pause()
+        for _ in range(20):
+            await pilot.pause()
+            if cell_plain(table.get_row_at(0)[6]) == "2.00 GB":
+                break
 
         assert inventory_calls["count"] == 2
         assert usage_calls["count"] == 2
@@ -313,6 +372,7 @@ async def _assert_tui_recomputes_column_widths_after_terminal_resize() -> None:
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         table = app.query_one("#distributions")
         initial_widths = [column.width for column in table.ordered_columns]
@@ -344,6 +404,7 @@ async def _assert_summary_progress_bars_resize_with_terminal_width() -> None:
 
     async with app.run_test(size=(100, 30)) as pilot:
         await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
 
         download_card = app.query_one("#summary-download-card")
         download_bar = app.query_one("#summary-download-card-bar", ProgressBar)

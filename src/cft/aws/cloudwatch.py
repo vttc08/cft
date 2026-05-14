@@ -85,9 +85,11 @@ class CloudFrontUsageService:
             )
             cached = existing.cw
             cache_is_current_month = cached.month_key == month_key
+            cache_has_complete_usage = cached.download is not None and cached.requests is not None
             cache_is_fresh = (
                 not refresh
                 and cache_is_current_month
+                and cache_has_complete_usage
                 and cache_policy.is_fresh(cached.last_updated, now=now)
             )
             if cache_is_fresh:
@@ -109,22 +111,13 @@ class CloudFrontUsageService:
                     )
                     continue
 
-            query_start = self._month_start(now)
-            base_download = 0
-            base_requests = 0
-            if cache_is_current_month and cached.last_updated is not None:
-                query_start = cached.last_updated
-                base_download = cached.download or 0
-                base_requests = cached.requests or 0
-
             try:
                 refreshed = self._refresh_distribution_usage(
                     cloudwatch,
                     distribution_id=distribution.distribution_id,
-                    start_time=query_start,
+                    cached=cached,
+                    cache_is_current_month=cache_is_current_month,
                     end_time=now,
-                    base_download=base_download,
-                    base_requests=base_requests,
                     month_key=month_key,
                 )
             except Exception:
@@ -157,24 +150,27 @@ class CloudFrontUsageService:
         cloudwatch_client: object,
         *,
         distribution_id: str,
-        start_time: datetime,
+        cached: SourceMetrics,
+        cache_is_current_month: bool,
         end_time: datetime,
-        base_download: int,
-        base_requests: int,
         month_key: str,
     ) -> SourceMetrics:
-        download = base_download + self._metric_sum(
+        download = self._refresh_metric(
             cloudwatch_client,
             distribution_id=distribution_id,
             metric_name="BytesDownloaded",
-            start_time=start_time,
+            cached_value=cached.download,
+            cached_last_updated=cached.last_updated,
+            cache_is_current_month=cache_is_current_month,
             end_time=end_time,
         )
-        requests = base_requests + self._metric_sum(
+        requests = self._refresh_metric(
             cloudwatch_client,
             distribution_id=distribution_id,
             metric_name="Requests",
-            start_time=start_time,
+            cached_value=cached.requests,
+            cached_last_updated=cached.last_updated,
+            cache_is_current_month=cache_is_current_month,
             end_time=end_time,
         )
         return SourceMetrics(
@@ -184,6 +180,35 @@ class CloudFrontUsageService:
             last_updated=end_time,
             month_key=month_key,
         )
+
+    @staticmethod
+    def _refresh_metric(
+        cloudwatch_client: object,
+        *,
+        distribution_id: str,
+        metric_name: str,
+        cached_value: int | None,
+        cached_last_updated: datetime | None,
+        cache_is_current_month: bool,
+        end_time: datetime,
+    ) -> int | None:
+        start_time = end_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+        base_value = 0
+        if cache_is_current_month and cached_value is not None and cached_last_updated is not None:
+            start_time = cached_last_updated
+            base_value = cached_value
+
+        try:
+            metric_value = CloudFrontUsageService._metric_sum(
+                cloudwatch_client,
+                distribution_id=distribution_id,
+                metric_name=metric_name,
+                start_time=start_time,
+                end_time=end_time,
+            )
+        except Exception:
+            return cached_value
+        return base_value + metric_value
 
     @staticmethod
     def _metric_sum(
