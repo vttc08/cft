@@ -24,8 +24,8 @@ Do **not** use the AWS Cost Explorer API in normal operation. `aws ce get-cost-a
 - **Terminal UI / Formatting:** Rich
 - **AWS SDK:** boto3 (always prefer boto3 and official docs)
 - **Parquet + SQL:** DuckDB
-- **Config:** `platformdirs` for paths + either `tomlkit` (preserve comments) or `pydantic-settings` (validation)
-- **Cache:** JSON files with DistributionID as keys
+- **Config:** a single `~/.cft`-style app tree by default, with explicit XDG-style overrides for advanced users, plus either `tomlkit` (preserve comments) or `pydantic-settings` (validation)
+- **Cache:** profile-scoped JSON state with DistributionID as keys
 - **Packaging:** `pyproject.toml`-based packaging; use `uv` tooling as the developer prefers alongside standard build backends
 - **Tests:** `pytest` plus `botocore` `Stubber` for AWS interaction tests
 
@@ -230,22 +230,24 @@ Use a local application directory:
 
 or the platform equivalent:
 
-- Linux/macOS: `$XDG_CONFIG_HOME/cft`, `$XDG_CACHE_HOME/cft`, `$XDG_DATA_HOME/cft` where appropriate.
-- Windows: use the user profile / app data equivalent.
+- Linux/macOS/Termux: `$HOME/.cft`
+- Windows: `%USERPROFILE%\.cft`
+- Advanced users may override config/cache/data roots independently to match an XDG-style split layout.
 
 Suggested config layout:
 
 ```text
 ~/.cft/
-  config.toml
-  profiles/
+  config/
+    config.toml
     default.toml
   cache/
-    profile/
-      distributions.json
-  data_exports/
-    <profile>/
-      <distribution_id>.<mm>.parquet
+    default/
+      state.json
+  data/
+    data_exports/
+      <profile>/
+        parquet/
 ```
 
 AWS credentials remain in:
@@ -257,15 +259,12 @@ AWS credentials remain in:
 
 Do not copy or store AWS access keys inside `~/.cft`.
 
-Suggested `distributions.json` shape could mirror how data is displayed in the TUI
+Suggested `state.json` shape could mirror how data is displayed in the TUI
 ```json
-{"last_updated":"2023-10-01T00:00:00Z","s3_data_export_etag":"etag123","usage_amount":1000,"bytes_downloaded":500,"bytes_uploaded":500,"requests":100,"distributions":[]}
+{"schema_version":1,"profile_name":"default","last_updated":"2023-10-01T00:00:00Z","profile":{"download":1000,"upload":500,"requests":100,"cost":12.34,"last_updated":"2023-10-01T00:00:00Z"},"distributions":{"E123":{"type":"PAYG","inventory":{"comment":"site"},"s3":{"download":500,"upload":0,"requests":25,"last_updated":"2023-10-01T00:00:00Z"},"cwl":{"download":0,"upload":50,"requests":10,"last_updated":"2023-10-01T00:00:00Z"}}}}
 ```
 
-Suggested per distribution shape:
-```json
-DistributionID: {"cw_last_updated","cw_upload","s3_last_updated","s3_upload"}
-```
+Per distribution, keep source-specific buckets (`s3` and `cwl`) so one source can be empty without changing schema shape. Keep only the fields needed for summary and display in cache; leave large CloudFront metadata in runtime unless it affects the UI.
 
 ## AWS Profiles and Sessions
 

@@ -11,6 +11,8 @@ build/
 .mcp.json
 .copilot/
 .json/
+.cft/
+*.parquet
 __pycache__/
 *.pyc
 *.pyo

@@ -12,7 +12,7 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
-from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Sparkline, Static
+from textual.widgets import DataTable, Digits, Footer, Header, ProgressBar, Static
 from textual.widgets._progress_bar import Bar
 
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService

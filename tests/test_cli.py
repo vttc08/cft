@@ -63,3 +63,17 @@ def test_dev_command_enables_css_watch_mode(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert captured == {"profile_name": "dev", "watch_css": True}
+
+
+def test_config_paths_command_renders_json(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("CFT_HOME", str(tmp_path / "cft-home"))
+
+    result = runner.invoke(app, ["config", "paths", "--profile", "dev", "--json"])
+
+    assert result.exit_code == 0
+    assert '"profile": "dev"' in result.stdout
+    assert str(tmp_path / "cft-home") in result.stdout
+    assert str(tmp_path / "cft-home" / "config" / "config.toml") in result.stdout
+    assert str(tmp_path / "cft-home" / "config" / "dev.toml") in result.stdout
+    assert str(tmp_path / "cft-home" / "cache" / "dev" / "state.json") in result.stdout
+    assert str(tmp_path / "cft-home" / "data" / "data_exports" / "dev" / "parquet") in result.stdout
