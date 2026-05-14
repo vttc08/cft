@@ -3,7 +3,7 @@ import asyncio
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.models.distribution import DistributionSummary
-from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp
+from cft.tui.app import CFT_AWS_THEME, MOCK_SUMMARY_DATA, CftApp, SummaryWidgetShowcase
 from textual.widgets import Digits, ProgressBar
 
 
@@ -85,9 +85,9 @@ async def _assert_tui_renders_summary_and_distribution_table() -> None:
         summary_note = app.query_one("#summary-note").content
         assert summary_note.startswith("Profile default · Account 123456789012")
         assert "Now:\t" in summary_note
-        assert app.query_one("#summary-download-value").content == MOCK_SUMMARY_DATA.download
-        assert app.query_one("#summary-upload-value").content == MOCK_SUMMARY_DATA.upload
-        assert app.query_one("#summary-requests-value").content == MOCK_SUMMARY_DATA.requests
+        assert app.query_one("#summary-download-value").content == "128.4 GB"
+        assert app.query_one("#summary-upload-value").content == "6.8 GB"
+        assert app.query_one("#summary-requests-value").content == "1.24M"
         assert app.query_one("#summary-cost-prefix").content == "$"
         assert app.query_one("#summary-cost-value", Digits).value == "8.42"
         assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 128.4
@@ -306,6 +306,7 @@ def test_tui_formats_transfer_columns_with_shared_precision() -> None:
     assert CftApp._format_transfer_value(1_234_000_000, spec) == "1.23 GB"
     assert CftApp._format_transfer_value(99_890_000_000, spec) == "99.89 GB"
     assert CftApp._format_transfer_value(998_900_000_000, spec) == "998.90 GB"
+    assert CftApp._format_transfer_value(1_234_000_000.0, spec) == "1.23 GB"
 
 
 def test_tui_formats_request_counts_compactly() -> None:
@@ -313,3 +314,9 @@ def test_tui_formats_request_counts_compactly() -> None:
     assert CftApp._format_request_count(99_890, width=7) == "99.89K"
     assert CftApp._format_request_count(1_234_000, width=6) == "1.23M"
     assert CftApp._format_request_count(987, width=4) == "987"
+    assert CftApp._format_request_count(1_234_000.0, width=6) == "1.23M"
+
+
+def test_tui_formats_summary_transfer_values_from_bytes() -> None:
+    assert SummaryWidgetShowcase._format_summary_transfer(128_400_000_000) == "128.4 GB"
+    assert SummaryWidgetShowcase._format_summary_transfer(6_800_000_000.0) == "6.8 GB"
