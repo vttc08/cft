@@ -8,6 +8,7 @@ from cft.data_exports import BillingSnapshot
 from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
+from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar
 
 
@@ -559,6 +560,7 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
         await pilot.press("b")
         await pilot.pause()
 
+        assert isinstance(app.screen, CurExportSetupScreen)
         bucket_list = app.screen.query_one("#cur-export-bucket-list", ListView)
         assert bucket_list.index == 0
 
