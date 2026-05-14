@@ -75,6 +75,20 @@ class AppPaths:
     def parquet_dir(self, profile_name: str | None) -> Path:
         return self.data_exports_dir(profile_name) / "parquet"
 
+    def parquet_month_dir(self, profile_name: str | None, month_key: str) -> Path:
+        return self.parquet_dir(profile_name) / month_key
+
+    def data_export_metadata_dir(self, profile_name: str | None, month_key: str) -> Path:
+        return self.data_exports_dir(profile_name) / "metadata" / month_key
+
+    def data_export_manifest_file(
+        self,
+        profile_name: str | None,
+        month_key: str,
+        export_name: str,
+    ) -> Path:
+        return self.data_export_metadata_dir(profile_name, month_key) / f"{export_name}-Manifest.json"
+
     def ensure_base_dirs(self) -> None:
         for directory in (
             self.config_dir,

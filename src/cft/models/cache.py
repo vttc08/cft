@@ -36,6 +36,32 @@ def _compact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
 
+def _mapping_of_strings(payload: object) -> dict[str, str]:
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, str] = {}
+    for key, value in payload.items():
+        key_text = str(key).strip()
+        value_text = str(value).strip()
+        if key_text and value_text:
+            result[key_text] = value_text
+    return result
+
+
+def _mapping_of_mapping_strings(payload: object) -> dict[str, dict[str, str]]:
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, dict[str, str]] = {}
+    for key, value in payload.items():
+        key_text = str(key).strip()
+        if not key_text:
+            continue
+        normalized = _mapping_of_strings(value)
+        if normalized:
+            result[key_text] = normalized
+    return result
+
+
 @dataclass(frozen=True)
 class SourceMetrics:
     download: int | None = None
@@ -77,9 +103,16 @@ class SourceMetrics:
 @dataclass(frozen=True)
 class ProfileSummaryCache:
     last_updated: datetime | None = None
+    manifest_last_checked: datetime | None = None
+    month_key: str | None = None
     s3_cur_bucket: str | None = None
     s3_cur_prefix: str | None = None
     s3_cur_export_name: str | None = None
+    manifest_key: str | None = None
+    manifest_etag: str | None = None
+    parquet_files: dict[str, dict[str, str]] = field(default_factory=dict)
+    data_start: datetime | None = None
+    data_end: datetime | None = None
     download: int | None = None
     upload: int | None = None
     requests: int | None = None
@@ -92,11 +125,18 @@ class ProfileSummaryCache:
 
         return cls(
             last_updated=parse_utc_datetime(payload.get("last_updated")),
+            manifest_last_checked=parse_utc_datetime(payload.get("manifest_last_checked")),
+            month_key=_string_or_none(payload.get("month_key")),
             s3_cur_bucket=_string_or_none(payload.get("s3_cur_bucket") or payload.get("bucket")),
             s3_cur_prefix=_string_or_none(payload.get("s3_cur_prefix") or payload.get("prefix")),
             s3_cur_export_name=_string_or_none(
                 payload.get("s3_cur_export_name") or payload.get("export_name")
             ),
+            manifest_key=_string_or_none(payload.get("manifest_key")),
+            manifest_etag=_string_or_none(payload.get("manifest_etag")),
+            parquet_files=_mapping_of_mapping_strings(payload.get("parquet_files")),
+            data_start=parse_utc_datetime(payload.get("data_start")),
+            data_end=parse_utc_datetime(payload.get("data_end")),
             download=_int_or_none(payload.get("download") or payload.get("bytes_downloaded")),
             upload=_int_or_none(payload.get("upload") or payload.get("bytes_uploaded")),
             requests=_int_or_none(payload.get("requests")),
@@ -109,6 +149,22 @@ class ProfileSummaryCache:
                 "last_updated": (
                     format_utc_datetime(self.last_updated) if self.last_updated else None
                 ),
+                "manifest_last_checked": (
+                    format_utc_datetime(self.manifest_last_checked)
+                    if self.manifest_last_checked
+                    else None
+                ),
+                "month_key": self.month_key,
+                "bucket": self.s3_cur_bucket,
+                "prefix": self.s3_cur_prefix,
+                "export_name": self.s3_cur_export_name,
+                "manifest_key": self.manifest_key,
+                "manifest_etag": self.manifest_etag,
+                "parquet_files": self.parquet_files or None,
+                "data_start": (
+                    format_utc_datetime(self.data_start) if self.data_start else None
+                ),
+                "data_end": format_utc_datetime(self.data_end) if self.data_end else None,
                 "download": self.download,
                 "upload": self.upload,
                 "requests": self.requests,

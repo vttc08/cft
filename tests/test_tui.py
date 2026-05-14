@@ -4,6 +4,7 @@ import threading
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.config.paths import AppPaths
+from cft.data_exports import BillingSnapshot
 from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
@@ -82,6 +83,18 @@ def fake_usage(_: CloudFrontInventory) -> dict[str, SourceMetrics]:
     }
 
 
+def fake_billing() -> BillingSnapshot:
+    return BillingSnapshot(
+        profile_name="dev",
+        configured=True,
+        download_bytes=128_400_000_000,
+        upload_bytes=6_800_000_000,
+        requests=1_240_000,
+        cost=8.42,
+        data_end=datetime(2026, 5, 11, 8, 0),
+    )
+
+
 async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) -> None:
     for _ in range(attempts):
         dashboard = app.query_one("#dashboard-scroll")
@@ -123,14 +136,14 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.query_one("#summary-cur-export-bucket").content == "Not configured"
         assert app.query_one("#summary-cur-export-detail").content == "Path: / · Export: -"
         assert cur_export_link.content == "Setup Data Export"
-        assert app.query_one("#summary-download-value").content == "128.4 GB"
-        assert app.query_one("#summary-upload-value").content == "6.8 GB"
-        assert app.query_one("#summary-requests-value").content == "1.24M"
+        assert app.query_one("#summary-download-value").content == "-"
+        assert app.query_one("#summary-upload-value").content == "-"
+        assert app.query_one("#summary-requests-value").content == "-"
         assert app.query_one("#summary-cost-prefix").content == "$"
-        assert app.query_one("#summary-cost-value", Digits).value == "8.42"
-        assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 128.4
-        assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 6.8
-        assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 1_240_000
+        assert app.query_one("#summary-cost-value", Digits).value == "-"
+        assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 0
+        assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 0
+        assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 0
         assert round(app.query_one("#summary-requests-card-bar", ProgressBar).total or 0) == 10_000_000
         assert app.query_one("#table-title").content == "Distributions"
         assert app.query_one("#table-subtitle").content == "May 2026"
@@ -474,6 +487,7 @@ def test_tui_formats_request_counts_compactly() -> None:
 def test_tui_formats_summary_transfer_values_from_bytes() -> None:
     assert SummaryWidgetShowcase._format_summary_transfer(128_400_000_000) == "128.4 GB"
     assert SummaryWidgetShowcase._format_summary_transfer(6_800_000_000.0) == "6.8 GB"
+    assert SummaryWidgetShowcase._format_summary_transfer(None) == "-"
 
 
 def test_tui_shows_configured_cur_export_status(tmp_path) -> None:
@@ -499,6 +513,7 @@ export_name = "cloudfront-cur"
         profile_name="dev",
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
+        billing_loader=fake_billing,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -513,6 +528,11 @@ export_name = "cloudfront-cur"
             "Path: /exports · Export: cloudfront-cur"
         )
         assert cur_export_link.content == "Edit Data Export"
+        assert app.query_one("#summary-last-updated").content == "Last updated: 2026-05-11 08:00:00"
+        assert app.query_one("#summary-download-value").content == "128.4 GB"
+        assert app.query_one("#summary-upload-value").content == "6.8 GB"
+        assert app.query_one("#summary-requests-value").content == "1.24M"
+        assert app.query_one("#summary-cost-value", Digits).value == "8.42"
 
 
 def test_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None:

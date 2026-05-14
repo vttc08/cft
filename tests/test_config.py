@@ -129,6 +129,21 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
         last_updated=datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
         profile=ProfileSummaryCache(
             last_updated=datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
+            manifest_last_checked=datetime(2026, 5, 13, 11, tzinfo=timezone.utc),
+            month_key="2026-05",
+            s3_cur_bucket="billing-bucket",
+            s3_cur_prefix="exports",
+            s3_cur_export_name="cloudfront-cur",
+            manifest_key="exports/cloudfront-cur/BILLING_PERIOD=2026-05/metadata/cloudfront-cur-Manifest.json",
+            manifest_etag="etag-1",
+            parquet_files={
+                "exports/file-1.parquet": {
+                    "etag": "etag-a",
+                    "local_path": "/tmp/file-1.parquet",
+                }
+            },
+            data_start=datetime(2026, 5, 1, 0, tzinfo=timezone.utc),
+            data_end=datetime(2026, 5, 13, 8, tzinfo=timezone.utc),
             download=1,
             upload=2,
             requests=3,
@@ -156,6 +171,11 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
 
     assert round_tripped.profile_name == "dev"
     assert round_tripped.profile.cost == 4.5
+    assert round_tripped.profile.month_key == "2026-05"
+    assert round_tripped.profile.s3_cur_bucket == "billing-bucket"
+    assert round_tripped.profile.manifest_etag == "etag-1"
+    assert round_tripped.profile.parquet_files["exports/file-1.parquet"]["etag"] == "etag-a"
+    assert round_tripped.profile.data_end == datetime(2026, 5, 13, 8, tzinfo=timezone.utc)
     assert round_tripped.distributions["E123"].type == "PAYG"
     assert round_tripped.distributions["E123"].cw.download == 7
     assert round_tripped.distributions["E123"].cw.month_key == "2026-05"
