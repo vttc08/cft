@@ -138,7 +138,7 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         summary_note = app.query_one("#summary-note").content
         assert summary_note.startswith("Profile dev · Account 123456789012")
         assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
-        assert app.query_one("#summary-last-updated").content == "Last updated: -"
+        assert app.query_one("#summary-last-updated").content == "Updated: -"
         cur_export_link = app.query_one("#summary-cur-export-action", Link)
         assert app.query_one("#summary-cur-export-title").content == "CUR Export"
         assert app.query_one("#summary-cur-export-bucket").content == "Not configured"
@@ -153,9 +153,6 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 0
         assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 0
         assert round(app.query_one("#summary-requests-card-bar", ProgressBar).total or 0) == 10_000_000
-        assert app.query_one("#table-title").content == "Distributions"
-        assert app.query_one("#table-subtitle").content == "May 2026"
-
         table = app.query_one("#distributions")
         assert table.ordered_columns[0].label.plain.strip() == "ID"
         assert [column.label.plain.strip() for column in table.ordered_columns] == [
@@ -232,6 +229,77 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         await pilot.pause()
 
         assert not isinstance(app.screen, DistributionDetailScreen)
+
+
+def test_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path) -> None:
+    asyncio.run(_assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path))
+
+
+async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        table = app.query_one("#distributions")
+        assert app.query_one("#distribution-preview-title", Static).content == (
+            "Active: site · E123 · Free"
+        )
+        assert app.query_one("#distribution-preview-download-value", Static).content == (
+            "1.23 GB / 100 GB"
+        )
+        assert app.query_one("#distribution-preview-upload-value", Static).content == "n/a"
+        assert app.query_one("#distribution-preview-requests-value", Static).content == (
+            "1.23K / 1,000,000"
+        )
+        assert round(app.query_one("#distribution-preview-download-bar", ProgressBar).progress, 2) == 1_234_000_000
+        assert round(app.query_one("#distribution-preview-download-bar", ProgressBar).total or 0) == 100_000_000_000
+        assert round(app.query_one("#distribution-preview-requests-bar", ProgressBar).progress, 2) == 1234
+        assert round(app.query_one("#distribution-preview-requests-bar", ProgressBar).total or 0) == 1_000_000
+        assert round(app.query_one("#distribution-preview-upload-bar", ProgressBar).progress, 2) == 0
+
+        table.focus()
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.query_one("#distribution-preview-title", Static).content == (
+            "Active: marketing · E4567890 · PAYG"
+        )
+        assert app.query_one("#distribution-preview-download-value", Static).content == (
+            "99.89 GB / 1024 GB"
+        )
+        assert app.query_one("#distribution-preview-upload-value", Static).content == (
+            "n/a / 0.249 GB"
+        )
+        assert app.query_one("#distribution-preview-requests-value", Static).content == (
+            "99.89K / 10,000,000"
+        )
+        assert round(app.query_one("#distribution-preview-download-bar", ProgressBar).total or 0) == 1_024_000_000_000
+        assert round(app.query_one("#distribution-preview-download-bar", ProgressBar).progress, 2) == 99_890_000_000
+        assert round(app.query_one("#distribution-preview-requests-bar", ProgressBar).total or 0) == 10_000_000
+        assert round(app.query_one("#distribution-preview-requests-bar", ProgressBar).progress, 2) == 99_890
+
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.query_one("#distribution-preview-title", Static).content == (
+            "Active: primary-marketing-site-with-a-very-long-comment · E1234567890ABCDEFGHIJKL · PAYG"
+        )
+        assert app.query_one("#distribution-preview-download-value", Static).content == (
+            "998.90 GB / 1024 GB"
+        )
+        assert app.query_one("#distribution-preview-upload-value", Static).content == (
+            "n/a / 0.249 GB"
+        )
+        assert app.query_one("#distribution-preview-requests-value", Static).content == (
+            "1.23M / 10,000,000"
+        )
 
 
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
@@ -395,7 +463,7 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -
         assert app.query_one("#summary-showcase")
         assert app.query_one("#summary-note").content == "dev · 123456789012"
         assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
-        assert app.query_one("#summary-last-updated").content == "Last updated: -"
+        assert app.query_one("#summary-last-updated").content == "Updated: -"
         table = app.query_one("#distributions")
         table.focus()
         await pilot.press("down")
@@ -603,7 +671,7 @@ export_name = "cloudfront-cur"
             "Path: /exports · Export: cloudfront-cur"
         )
         assert cur_export_link.content == "Edit Data Export"
-        assert app.query_one("#summary-last-updated").content == "Last updated: 2026-05-11 08:00:00"
+        assert app.query_one("#summary-last-updated").content == "Updated: 2026-05-11 08:00:00"
         assert app.query_one("#summary-download-value").content == "128.4 GB"
         assert app.query_one("#summary-upload-value").content == "6.8 GB"
         assert app.query_one("#summary-requests-value").content == "1.24M"
