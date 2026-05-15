@@ -44,6 +44,7 @@ from cft.tui.screens.cur_export_setup import (
     CurExportSetupScreen,
     CurExportStatus,
 )
+from cft.tui.screens.distribution_detail import DistributionDetailScreen
 
 InventoryLoader = Callable[[], CloudFrontInventory]
 UsageLoader = Callable[[CloudFrontInventory], dict[str, SourceMetrics]]
@@ -597,9 +598,16 @@ class CftApp(App[None]):
             self.query_one("#status", Static).update(f"Selected distribution: {event.row_key.value}")
             return
 
+        usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
         comment = distribution.comment or "-"
         self.query_one("#status", Static).update(
-            f"Selected distribution {distribution.distribution_id}: {comment}"
+            f"Opened distribution {distribution.distribution_id}: {comment}"
+        )
+        self.push_screen(
+            DistributionDetailScreen(
+                distribution=distribution,
+                usage=usage,
+            )
         )
 
     def _check_resize(self) -> None:
