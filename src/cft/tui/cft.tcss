@@ -336,6 +336,72 @@ ProgressBar#summary-requests-card-bar > Bar {
     margin-right: 1;
 }
 
+#distribution-detail-modal {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    background: #00000066;
+}
+
+#distribution-detail-dialog {
+    width: 84;
+    max-width: 94%;
+    height: 85%;
+    padding: 1 2;
+}
+
+#distribution-detail-title {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 0;
+}
+
+#distribution-detail-subtitle {
+    color: $text-muted;
+    margin-bottom: 1;
+}
+
+#distribution-detail-content {
+    width: 100%;
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+.distribution-detail-section-title {
+    color: $text-muted;
+    text-style: bold;
+    margin-top: 1;
+    margin-bottom: 0;
+}
+
+.distribution-detail-row {
+    width: 100%;
+    height: auto;
+}
+
+.distribution-detail-key {
+    width: 16;
+    color: $text-muted;
+}
+
+.distribution-detail-value {
+    width: 1fr;
+    height: auto;
+    color: $foreground;
+}
+
+#distribution-detail-actions {
+    width: 100%;
+    height: auto;
+    margin-top: 0;
+    grid-size: 2 2;
+    grid-gutter: 0 1;
+}
+
+#distribution-detail-actions Button {
+    width: 100%;
+}
+
 DataTable {
     width: 100%;
     height: auto;

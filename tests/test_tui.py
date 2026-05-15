@@ -8,7 +8,9 @@ from cft.data_exports import BillingSnapshot
 from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
-from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar
+from cft.tui.screens.cur_export_setup import CurExportSetupScreen
+from cft.tui.screens.distribution_detail import DistributionDetailScreen
+from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar, Static
 
 
 def cell_text(value: object) -> str:
@@ -52,9 +54,9 @@ def fake_inventory() -> CloudFrontInventory:
                 domain_name="d222.cloudfront.net",
                 enabled=False,
                 status="InProgress",
-                aliases=(),
-                origins=(),
-                last_modified_time=None,
+                aliases=("cdn.example.com",),
+                origins=("origin.example.com",),
+                last_modified_time=datetime(2026, 5, 10, 8, 15),
             ),
             DistributionSummary(
                 distribution_id="E1234567890ABCDEFGHIJKL",
@@ -200,7 +202,30 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         await pilot.press("enter")
         await pilot.pause()
 
-        assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
+        assert isinstance(app.screen, DistributionDetailScreen)
+        assert app.screen.query_one("#distribution-detail-title", Static).content == "marketing"
+        assert app.screen.query_one("#distribution-detail-subtitle", Static).content == "E4567890"
+        assert app.screen.query_one("#distribution-detail-id", Static).content == "E4567890"
+        assert app.screen.query_one("#distribution-detail-domain", Static).content == "d222.cloudfront.net"
+        assert app.screen.query_one("#distribution-detail-status", Static).content == "InProgress"
+        assert app.screen.query_one("#distribution-detail-enabled", Static).content == "No"
+        assert app.screen.query_one("#distribution-detail-aliases", Static).content == "cdn.example.com"
+        assert app.screen.query_one("#distribution-detail-origins", Static).content == "origin.example.com"
+        assert app.screen.query_one("#distribution-detail-last-modified", Static).content == (
+            "2026-05-10 08:15:00"
+        )
+        assert app.screen.query_one("#distribution-detail-download", Static).content == "99.89 GB"
+        assert app.screen.query_one("#distribution-detail-upload", Static).content == "-"
+        assert app.screen.query_one("#distribution-detail-requests", Static).content == "99,890"
+        assert app.screen.query_one("#distribution-detail-month", Static).content == "2026-05"
+        assert app.screen.query_one("#distribution-action-origin", Button).disabled
+        assert app.screen.query_one("#distribution-action-cache", Button).disabled
+        assert app.screen.query_one("#distribution-action-disable", Button).disabled
+
+        await pilot.press("escape")
+        await pilot.pause()
+
+        assert not isinstance(app.screen, DistributionDetailScreen)
 
 
 def test_tui_shows_loading_panel_while_refreshing_data(tmp_path) -> None:
@@ -328,7 +353,8 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -
         await pilot.press("enter")
         await pilot.pause()
 
-        assert app.query_one("#status").content == "Selected distribution E4567890: marketing"
+        assert isinstance(app.screen, DistributionDetailScreen)
+        assert app.screen.query_one("#distribution-detail-id", Static).content == "E4567890"
 
 
 def test_tui_refresh_action_reloads_usage_data(tmp_path) -> None:
@@ -559,6 +585,7 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
         await pilot.press("b")
         await pilot.pause()
 
+        assert isinstance(app.screen, CurExportSetupScreen)
         bucket_list = app.screen.query_one("#cur-export-bucket-list", ListView)
         assert bucket_list.index == 0
 
