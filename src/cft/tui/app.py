@@ -11,6 +11,7 @@ from rich.text import Text
 from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.color import Gradient
 from textual.theme import Theme
 from textual import work
 from textual.widgets import (
@@ -243,7 +244,7 @@ class SummaryWidgetShowcase(Vertical):
             self._format_timestamp_line("Now", self.now_value, intro_width)
         )
         self.query_one("#summary-last-updated", Static).update(
-            self._format_timestamp_line("Last updated", self.last_updated_value, intro_width)
+            self._format_timestamp_line("Updated", self.last_updated_value, intro_width)
         )
 
         self.query_one("#summary-cur-export-bucket", Static).update(
@@ -391,6 +392,172 @@ class SummaryWidgetShowcase(Vertical):
 
     def _refresh_cost_value(self, value: int | float | None) -> None:
         self.query_one("#summary-cost-value", Digits).update(self._cost_digits_text(value))
+
+
+@dataclass(frozen=True)
+class UsageLimitSpec:
+    total: int | None
+    limit_text: str | None
+    supports_usage: bool = True
+
+
+class DistributionUsagePreview(Vertical):
+    def __init__(self) -> None:
+        super().__init__(id="distribution-preview")
+        self._gradient = Gradient.from_colors("#44B035", "#FF9900", "#E7157B")
+        self._neutral_gradient = Gradient.from_colors("#6a7178", "#8a9098")
+
+    def compose(self) -> ComposeResult:
+        yield Static("", id="distribution-preview-title")
+        with Vertical(id="distribution-preview-rows"):
+            yield self._usage_row("Downloads", "download")
+            yield self._usage_row("Uploads", "upload")
+            yield self._usage_row("Requests", "requests")
+
+    def _usage_row(self, label: str, metric: str) -> Horizontal:
+        return Horizontal(
+            Static(label, id=f"distribution-preview-{metric}-label", classes="distribution-preview-label"),
+            ResponsiveProgressBar(
+                total=1,
+                show_eta=False,
+                show_percentage=False,
+                id=f"distribution-preview-{metric}-bar",
+            ),
+            Static("", id=f"distribution-preview-{metric}-value", classes="distribution-preview-value"),
+            classes="distribution-preview-row",
+        )
+
+    def set_distribution(
+        self,
+        distribution: DistributionSummary | None,
+        distribution_type: str | None,
+        usage_by_distribution: dict[str, SourceMetrics],
+    ) -> None:
+        title = self.query_one("#distribution-preview-title", Static)
+        if distribution is None:
+            title.update("Active distribution: -")
+            self._set_row(
+                metric="download",
+                label="Downloads",
+                used_value=None,
+                used_text=None,
+                limit_spec=UsageLimitSpec(total=100 * 1_000_000_000, limit_text="100 GB"),
+                gradient=self._gradient,
+            )
+            self._set_row(
+                metric="upload",
+                label="Uploads",
+                used_value=None,
+                used_text="n/a",
+                limit_spec=UsageLimitSpec(total=None, limit_text=None, supports_usage=False),
+                gradient=self._neutral_gradient,
+            )
+            self._set_row(
+                metric="requests",
+                label="Requests",
+                used_value=None,
+                used_text=None,
+                limit_spec=UsageLimitSpec(total=1_000_000, limit_text="1,000,000"),
+                gradient=self._gradient,
+            )
+            return
+
+        distribution_label = distribution.comment or distribution.distribution_id or "Distribution"
+        normalized_type = normalize_distribution_type(distribution_type)
+        title.update(
+            f"Active: {distribution_label} · {distribution.distribution_id or '-'} · {normalized_type}"
+        )
+        usage = usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
+        limits = self._limits_for_distribution(normalized_type)
+        self._set_row(
+            metric="download",
+            label="Downloads",
+            used_value=usage.download,
+            used_text=self._format_bytes(usage.download),
+            limit_spec=limits["download"],
+            gradient=self._gradient,
+        )
+        self._set_row(
+            metric="upload",
+            label="Uploads",
+            used_value=usage.upload,
+            used_text=self._format_upload_text(usage.upload, limits["upload"]),
+            limit_spec=limits["upload"],
+            gradient=self._neutral_gradient if not limits["upload"].supports_usage else self._gradient,
+        )
+        self._set_row(
+            metric="requests",
+            label="Requests",
+            used_value=usage.requests,
+            used_text=self._format_request_text(usage.requests),
+            limit_spec=limits["requests"],
+            gradient=self._gradient,
+        )
+
+    def _set_row(
+        self,
+        *,
+        metric: str,
+        label: str,
+        used_value: int | None,
+        used_text: str | None,
+        limit_spec: UsageLimitSpec,
+        gradient: Gradient,
+    ) -> None:
+        label_widget = self.query_one(f"#distribution-preview-{metric}-label", Static)
+        value_widget = self.query_one(f"#distribution-preview-{metric}-value", Static)
+        bar_widget = self.query_one(f"#distribution-preview-{metric}-bar", ResponsiveProgressBar)
+
+        label_widget.update(label)
+        if limit_spec.total is None:
+            bar_widget.update(total=1, progress=0)
+            bar_widget.gradient = gradient
+            value_widget.update(used_text or "n/a")
+            return
+
+        bar_widget.update(total=limit_spec.total, progress=0 if used_value is None else min(used_value, limit_spec.total))
+        bar_widget.gradient = gradient
+        value_widget.update(self._compose_value_text(used_text, limit_spec))
+
+    def _compose_value_text(self, used_text: str | None, limit_spec: UsageLimitSpec) -> str:
+        if used_text is None:
+            return "n/a" if limit_spec.limit_text is None else f"n/a / {limit_spec.limit_text}"
+        if limit_spec.limit_text is None:
+            return used_text
+        return f"{used_text} / {limit_spec.limit_text}"
+
+    @staticmethod
+    def _format_bytes(value: int | None) -> str | None:
+        if value is None:
+            return None
+        return CftApp._format_transfer_value(value, TransferFormatSpec(suffix=" GB", decimals=2))
+
+    @staticmethod
+    def _format_request_text(value: int | None) -> str | None:
+        if value is None:
+            return None
+        return CftApp._format_request_count(value, width=10)
+
+    @staticmethod
+    def _format_upload_text(value: int | None, limit_spec: UsageLimitSpec) -> str | None:
+        if value is None:
+            return "n/a"
+        return CftApp._format_transfer_value(value, TransferFormatSpec(suffix=" GB", decimals=3))
+
+    @staticmethod
+    def _limits_for_distribution(distribution_type: str | None) -> dict[str, UsageLimitSpec]:
+        normalized_type = normalize_distribution_type(distribution_type)
+        if normalized_type == "Free":
+            return {
+                "download": UsageLimitSpec(total=100 * 1_000_000_000, limit_text="100 GB"),
+                "upload": UsageLimitSpec(total=None, limit_text=None, supports_usage=False),
+                "requests": UsageLimitSpec(total=1_000_000, limit_text="1,000,000"),
+            }
+        return {
+            "download": UsageLimitSpec(total=1024 * 1_000_000_000, limit_text="1024 GB"),
+            "upload": UsageLimitSpec(total=249_000_000, limit_text="0.249 GB"),
+            "requests": UsageLimitSpec(total=10_000_000, limit_text="10,000,000"),
+        }
 
 
 class ClickableDataTable(DataTable[str]):
@@ -561,14 +728,7 @@ class CftApp(App[None]):
                     cur_export_status=self._cur_export_status(),
                 )
                 with Vertical(id="table-shell"):
-                    with Horizontal(id="table-heading"):
-                        yield Static("Distributions", id="table-title")
-                        yield Static(f"{self.now():%B %Y}", id="table-subtitle")
-                    with Vertical(id="distribution-preview", classes="panel"):
-                        yield Static("", id="distribution-preview-title")
-                        yield Static("", id="distribution-preview-id")
-                        yield Static("", id="distribution-preview-meta")
-                        yield Static("", id="distribution-preview-usage")
+                    yield DistributionUsagePreview()
                     yield Static("", id="status")
                     yield ClickableDataTable(
                         id="distributions",
@@ -602,10 +762,6 @@ class CftApp(App[None]):
 
         usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
         distribution_type = self._distribution_type_for(distribution.distribution_id)
-        comment = distribution.comment or "-"
-        self.query_one("#status", Static).update(
-            f"Opened distribution {distribution.distribution_id}: {comment}"
-        )
         self.push_screen(
             DistributionDetailScreen(
                 distribution=distribution,
@@ -620,7 +776,7 @@ class CftApp(App[None]):
 
     def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
         distribution = self._distribution_for_key(event.row_key.value)
-        self._update_active_distribution_preview(distribution)
+        self._refresh_active_distribution_preview(distribution)
 
     def _check_resize(self) -> None:
         super()._check_resize()
@@ -806,19 +962,6 @@ class CftApp(App[None]):
         self._populate_rows(table, self.inventory.distributions, columns)
         self._refresh_active_distribution_preview()
 
-    def _refresh_active_distribution_preview(self) -> None:
-        if self.inventory is None or not self.inventory.distributions:
-            self._update_active_distribution_preview(None)
-            return
-
-        table = self.query_one("#distributions", DataTable)
-        row_index = table.cursor_row if table.cursor_row >= 0 else 0
-        if row_index >= table.row_count:
-            row_index = 0
-        row_key = table.ordered_rows[row_index].key.value
-        distribution = self._distribution_for_key(row_key)
-        self._update_active_distribution_preview(distribution)
-
     def _distribution_for_key(self, key: str) -> DistributionSummary | None:
         if self.inventory is None:
             return None
@@ -833,49 +976,32 @@ class CftApp(App[None]):
             return "PAYG"
         return normalize_distribution_type(self.inventory.distribution_types.get(distribution_id))
 
-    def _update_active_distribution_preview(self, distribution: DistributionSummary | None) -> None:
-        title = self.query_one("#distribution-preview-title", Static)
-        dist_id = self.query_one("#distribution-preview-id", Static)
-        meta = self.query_one("#distribution-preview-meta", Static)
-        usage = self.query_one("#distribution-preview-usage", Static)
-
-        if distribution is None:
-            title.update("Active distribution: -")
-            dist_id.update("")
-            meta.update("Use the arrow keys to move through the table.")
-            usage.update("")
+    def _refresh_active_distribution_preview(
+        self,
+        distribution: DistributionSummary | None = None,
+    ) -> None:
+        if self.inventory is None or not self.inventory.distributions:
+            self.query_one("#distribution-preview", DistributionUsagePreview).set_distribution(
+                None,
+                None,
+                {},
+            )
             return
 
-        distribution_type = self._distribution_type_for(distribution.distribution_id)
-        usage_data = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
-        title.update(distribution.comment or distribution.distribution_id or "Distribution")
-        dist_id.update(distribution.distribution_id or "-")
-        meta.update(
-            " · ".join(
-                part
-                for part in (
-                    f"Type: {distribution_type}",
-                    f"Status: {distribution.status or '-'}",
-                    f"Domain: {distribution.domain_name or '-'}",
-                )
-                if part
-            )
-        )
-        usage.update(
-            " · ".join(
-                part
-                for part in (
-                    f"Down: {self._format_transfer_cell(usage_data.download, self._preview_transfer_spec())}",
-                    f"Up: {self._format_transfer_cell(usage_data.upload, self._preview_transfer_spec())}",
-                    f"Req: {self._format_request_cell(usage_data.requests, width=8)}",
-                )
-                if part
-            )
-        )
+        if distribution is None:
+            table = self.query_one("#distributions", DataTable)
+            row_index = table.cursor_row if table.cursor_row >= 0 else 0
+            if row_index >= table.row_count:
+                row_index = 0
+            row_key = table.ordered_rows[row_index].key.value
+            distribution = self._distribution_for_key(row_key)
 
-    @staticmethod
-    def _preview_transfer_spec() -> TransferFormatSpec:
-        return TransferFormatSpec(suffix=" GB", decimals=2)
+        preview = self.query_one("#distribution-preview", DistributionUsagePreview)
+        preview.set_distribution(
+            distribution,
+            self._distribution_type_for(distribution.distribution_id) if distribution else None,
+            self.usage_by_distribution,
+        )
 
     def _handle_distribution_detail_result(
         self,

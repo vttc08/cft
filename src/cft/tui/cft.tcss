@@ -243,28 +243,7 @@ ProgressBar#summary-requests-card-bar > Bar {
 #table-shell {
     width: 100%;
     height: auto;
-    background: $panel;
-    border: solid #3a4047;
     padding: 0;
-}
-
-#table-heading {
-    width: 100%;
-    height: auto;
-    padding: 0 1;
-    background: $surface;
-    border-bottom: solid #3a4047;
-}
-
-#table-title {
-    width: 1fr;
-    color: $primary;
-    text-style: bold;
-}
-
-#table-subtitle {
-    width: auto;
-    color: $text-muted;
 }
 
 #status {
@@ -279,28 +258,43 @@ ProgressBar#summary-requests-card-bar > Bar {
 #distribution-preview {
     width: 100%;
     height: auto;
-    margin: 1 0 0 0;
-    padding: 0 1;
-    background: $surface;
-    border: solid #3a4047;
+    margin: 0;
+    padding: 0;
 }
 
 #distribution-preview-title {
     width: 100%;
     color: $primary;
     text-style: bold;
+    margin-bottom: 0;
 }
 
-#distribution-preview-id,
-#distribution-preview-meta,
-#distribution-preview-usage {
+#distribution-preview-rows {
     width: 100%;
-    color: $foreground;
+    height: auto;
 }
 
-#distribution-preview-meta,
-#distribution-preview-usage {
+.distribution-preview-row {
+    width: 100%;
+    height: auto;
+    margin-bottom: 0;
+}
+
+.distribution-preview-label {
+    width: 9;
     color: $text-muted;
+    text-style: bold;
+}
+
+.distribution-preview-value {
+    width: 18;
+    color: $foreground;
+    text-align: right;
+}
+
+#distribution-preview-rows ProgressBar {
+    width: 1fr;
+    margin: 0 0 0 1;
 }
 
 #cur-export-modal {
