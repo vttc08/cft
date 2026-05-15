@@ -246,13 +246,8 @@ ProgressBar#summary-requests-card-bar > Bar {
     padding: 0;
 }
 
-#status {
-    width: 100%;
-    height: auto;
-    color: $warning;
-    background: #2b2416;
-    border-bottom: solid #3c3422;
-    padding: 0 1;
+#distributions {
+    margin-top: 1;
 }
 
 #distribution-preview {

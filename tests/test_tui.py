@@ -734,9 +734,6 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
             "Path: /exports/root · Export: cloudfront-cur"
         )
         assert cur_export_link.content == "Edit Data Export"
-        assert app.query_one("#status").content == (
-            "Linked CUR export bucket billing-bucket for profile dev."
-        )
 
 
 def test_summary_widget_truncation_stages_are_consistent() -> None:

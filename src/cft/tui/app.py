@@ -729,7 +729,6 @@ class CftApp(App[None]):
                 )
                 with Vertical(id="table-shell"):
                     yield DistributionUsagePreview()
-                    yield Static("", id="status")
                     yield ClickableDataTable(
                         id="distributions",
                         cursor_type="row",
@@ -757,7 +756,7 @@ class CftApp(App[None]):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         distribution = self._distribution_for_key(event.row_key.value)
         if distribution is None:
-            self.query_one("#status", Static).update(f"Selected distribution: {event.row_key.value}")
+            self._set_status(f"Selected distribution: {event.row_key.value}")
             return
 
         usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
@@ -788,7 +787,7 @@ class CftApp(App[None]):
         try:
             self.inventory = await asyncio.to_thread(self._load_inventory, refresh=refresh)
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
-            self.query_one("#status", Static).update(f"AWS inventory unavailable: {error}")
+            self._set_status(f"AWS inventory unavailable: {error}")
             self._set_loading_state(False, f"AWS inventory unavailable: {error}")
             return
 
@@ -801,7 +800,7 @@ class CftApp(App[None]):
             )
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
             self.usage_by_distribution = {}
-            self.query_one("#status", Static).update(f"CloudWatch usage unavailable: {error}")
+            self._set_status(f"CloudWatch usage unavailable: {error}")
             self._set_loading_state(False, f"CloudWatch usage unavailable: {error}")
             return
 
@@ -819,7 +818,7 @@ class CftApp(App[None]):
                 ),
                 message=f"Billing unavailable: {error}",
             )
-            self.query_one("#status", Static).update(f"CUR billing unavailable: {error}")
+            self._set_status(f"CUR billing unavailable: {error}")
 
         self._refresh_distribution_table()
         self._refresh_summary()
@@ -828,7 +827,7 @@ class CftApp(App[None]):
         if refresh:
             refreshed_at = self.now().strftime("%H:%M:%S")
             message = f"Refreshed CloudWatch usage at {refreshed_at}"
-            self.query_one("#status", Static).update(message)
+            self._set_status(message)
             self.notify(message, title="cft refresh", severity="information", timeout=2.5)
 
     def _load_inventory(self, *, refresh: bool) -> CloudFrontInventory:
@@ -859,6 +858,12 @@ class CftApp(App[None]):
         else:
             loading_panel.add_class("hidden")
             dashboard.remove_class("hidden")
+
+    def _set_status(self, message: str) -> None:
+        try:
+            self.query_one("#status", Static).update(message)
+        except Exception:
+            return
 
     def _refresh_summary(self) -> None:
         summary = self.query_one("#summary-showcase", SummaryWidgetShowcase)
@@ -927,7 +932,7 @@ class CftApp(App[None]):
             create=False,
         )
         self._refresh_summary()
-        self.query_one("#status", Static).update(
+        self._set_status(
             f"Linked CUR export bucket {result.bucket} for profile {self.settings_profile_name}."
         )
 
@@ -1022,7 +1027,7 @@ class CftApp(App[None]):
             )
         except Exception as error:  # pragma: no cover - filesystem errors are environment-specific.
             message = f"Failed to save plan type for {distribution_id}: {error}"
-            self.query_one("#status", Static).update(message)
+            self._set_status(message)
             self.notify(message, title="cft plan type", severity="error", timeout=3)
             return
 
@@ -1037,7 +1042,7 @@ class CftApp(App[None]):
 
         self._refresh_distribution_table()
         message = f"Saved {normalized_type} plan type for {distribution_id}."
-        self.query_one("#status", Static).update(message)
+        self._set_status(message)
         self.notify(message, title="cft plan type", severity="information", timeout=2.5)
 
     def _populate_rows(
@@ -1047,10 +1052,10 @@ class CftApp(App[None]):
         columns: tuple[ResolvedColumn, ...],
     ) -> None:
         if not distributions:
-            self.query_one("#status", Static).update("No CloudFront distributions found.")
+            self._set_status("No CloudFront distributions found.")
             return
 
-        self.query_one("#status", Static).update("")
+        self._set_status("")
         column_map = {column.spec.key: column for column in columns}
         transfer_spec = self._resolve_transfer_format(
             TRANSFER_FORMAT_SAMPLES,
