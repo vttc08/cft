@@ -234,6 +234,60 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert not isinstance(app.screen, DistributionDetailScreen)
 
 
+def test_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path) -> None:
+    asyncio.run(_assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path))
+
+
+async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        table = app.query_one("#distributions")
+        assert app.query_one("#distribution-preview-title", Static).content == "site"
+        assert app.query_one("#distribution-preview-id", Static).content == "E123"
+        assert app.query_one("#distribution-preview-meta", Static).content == (
+            "Type: Free · Status: Deployed · Domain: d111.cloudfront.net"
+        )
+        assert app.query_one("#distribution-preview-usage", Static).content == (
+            "Down: 1.23 GB · Up: - · Req: 1.23K"
+        )
+
+        table.focus()
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.query_one("#distribution-preview-title", Static).content == "marketing"
+        assert app.query_one("#distribution-preview-id", Static).content == "E4567890"
+        assert app.query_one("#distribution-preview-meta", Static).content == (
+            "Type: PAYG · Status: InProgress · Domain: d222.cloudfront.net"
+        )
+        assert app.query_one("#distribution-preview-usage", Static).content == (
+            "Down: 99.89 GB · Up: - · Req: 99.89K"
+        )
+
+        await pilot.press("down")
+        await pilot.pause()
+
+        assert app.query_one("#distribution-preview-title", Static).content == (
+            "primary-marketing-site-with-a-very-long-comment"
+        )
+        assert app.query_one("#distribution-preview-id", Static).content == "E1234567890ABCDEFGHIJKL"
+        assert app.query_one("#distribution-preview-meta", Static).content == (
+            "Type: PAYG · Status: Deployed · Domain: d111111111111111111111111111111111111.cloudfront.net"
+        )
+        assert app.query_one("#distribution-preview-usage", Static).content == (
+            "Down: 998.90 GB · Up: - · Req: 1.23M"
+        )
+
+
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
     asyncio.run(_assert_tui_updates_distribution_plan_type_and_caches_it(tmp_path))
 

@@ -564,6 +564,11 @@ class CftApp(App[None]):
                     with Horizontal(id="table-heading"):
                         yield Static("Distributions", id="table-title")
                         yield Static(f"{self.now():%B %Y}", id="table-subtitle")
+                    with Vertical(id="distribution-preview", classes="panel"):
+                        yield Static("", id="distribution-preview-title")
+                        yield Static("", id="distribution-preview-id")
+                        yield Static("", id="distribution-preview-meta")
+                        yield Static("", id="distribution-preview-usage")
                     yield Static("", id="status")
                     yield ClickableDataTable(
                         id="distributions",
@@ -613,6 +618,10 @@ class CftApp(App[None]):
             ),
         )
 
+    def on_data_table_row_highlighted(self, event: DataTable.RowHighlighted) -> None:
+        distribution = self._distribution_for_key(event.row_key.value)
+        self._update_active_distribution_preview(distribution)
+
     def _check_resize(self) -> None:
         super()._check_resize()
         if self.inventory is not None:
@@ -658,6 +667,7 @@ class CftApp(App[None]):
 
         self._refresh_distribution_table()
         self._refresh_summary()
+        self._refresh_active_distribution_preview()
         self._set_loading_state(False, f"Loaded CloudFront data at {self.now():%H:%M:%S}")
         if refresh:
             refreshed_at = self.now().strftime("%H:%M:%S")
@@ -794,6 +804,20 @@ class CftApp(App[None]):
                 width=column.render_width,
             )
         self._populate_rows(table, self.inventory.distributions, columns)
+        self._refresh_active_distribution_preview()
+
+    def _refresh_active_distribution_preview(self) -> None:
+        if self.inventory is None or not self.inventory.distributions:
+            self._update_active_distribution_preview(None)
+            return
+
+        table = self.query_one("#distributions", DataTable)
+        row_index = table.cursor_row if table.cursor_row >= 0 else 0
+        if row_index >= table.row_count:
+            row_index = 0
+        row_key = table.ordered_rows[row_index].key.value
+        distribution = self._distribution_for_key(row_key)
+        self._update_active_distribution_preview(distribution)
 
     def _distribution_for_key(self, key: str) -> DistributionSummary | None:
         if self.inventory is None:
@@ -808,6 +832,50 @@ class CftApp(App[None]):
         if self.inventory is None:
             return "PAYG"
         return normalize_distribution_type(self.inventory.distribution_types.get(distribution_id))
+
+    def _update_active_distribution_preview(self, distribution: DistributionSummary | None) -> None:
+        title = self.query_one("#distribution-preview-title", Static)
+        dist_id = self.query_one("#distribution-preview-id", Static)
+        meta = self.query_one("#distribution-preview-meta", Static)
+        usage = self.query_one("#distribution-preview-usage", Static)
+
+        if distribution is None:
+            title.update("Active distribution: -")
+            dist_id.update("")
+            meta.update("Use the arrow keys to move through the table.")
+            usage.update("")
+            return
+
+        distribution_type = self._distribution_type_for(distribution.distribution_id)
+        usage_data = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
+        title.update(distribution.comment or distribution.distribution_id or "Distribution")
+        dist_id.update(distribution.distribution_id or "-")
+        meta.update(
+            " · ".join(
+                part
+                for part in (
+                    f"Type: {distribution_type}",
+                    f"Status: {distribution.status or '-'}",
+                    f"Domain: {distribution.domain_name or '-'}",
+                )
+                if part
+            )
+        )
+        usage.update(
+            " · ".join(
+                part
+                for part in (
+                    f"Down: {self._format_transfer_cell(usage_data.download, self._preview_transfer_spec())}",
+                    f"Up: {self._format_transfer_cell(usage_data.upload, self._preview_transfer_spec())}",
+                    f"Req: {self._format_request_cell(usage_data.requests, width=8)}",
+                )
+                if part
+            )
+        )
+
+    @staticmethod
+    def _preview_transfer_spec() -> TransferFormatSpec:
+        return TransferFormatSpec(suffix=" GB", decimals=2)
 
     def _handle_distribution_detail_result(
         self,

@@ -276,6 +276,33 @@ ProgressBar#summary-requests-card-bar > Bar {
     padding: 0 1;
 }
 
+#distribution-preview {
+    width: 100%;
+    height: auto;
+    margin: 1 0 0 0;
+    padding: 0 1;
+    background: $surface;
+    border: solid #3a4047;
+}
+
+#distribution-preview-title {
+    width: 100%;
+    color: $primary;
+    text-style: bold;
+}
+
+#distribution-preview-id,
+#distribution-preview-meta,
+#distribution-preview-usage {
+    width: 100%;
+    color: $foreground;
+}
+
+#distribution-preview-meta,
+#distribution-preview-usage {
+    color: $text-muted;
+}
+
 #cur-export-modal {
     align: center middle;
     width: 100%;
