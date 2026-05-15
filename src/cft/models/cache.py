@@ -32,6 +32,19 @@ def _string_or_none(value: object) -> str | None:
     return text or None
 
 
+def normalize_distribution_type(value: object | None) -> str:
+    text = _string_or_none(value)
+    if text is None:
+        return "PAYG"
+
+    normalized = text.casefold().replace("-", "_").replace(" ", "_")
+    if normalized in {"payg", "pay_as_you_go"}:
+        return "PAYG"
+    if normalized in {"free", "flat_rate", "flat_free"}:
+        return "Free"
+    return "PAYG"
+
+
 def _compact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
@@ -176,7 +189,7 @@ class ProfileSummaryCache:
 @dataclass(frozen=True)
 class DistributionCacheRecord:
     distribution_id: str
-    type: str = "unknown"
+    type: str = "PAYG"
     inventory: dict[str, Any] = field(default_factory=dict)
     cw: SourceMetrics = field(default_factory=SourceMetrics)
     s3: SourceMetrics = field(default_factory=SourceMetrics)
@@ -199,7 +212,7 @@ class DistributionCacheRecord:
 
         return cls(
             distribution_id=str(payload.get("distribution_id") or distribution_id),
-            type=_string_or_none(payload.get("type")) or "unknown",
+            type=normalize_distribution_type(payload.get("type")),
             inventory=inventory,
             cw=SourceMetrics.from_payload(payload.get("cw")),
             s3=SourceMetrics.from_payload(payload.get("s3")),
@@ -231,7 +244,9 @@ class DistributionCacheRecord:
             self,
             inventory=inventory,
             last_updated=last_updated if last_updated is not None else self.last_updated,
-            type=distribution_type if distribution_type is not None else self.type,
+            type=normalize_distribution_type(distribution_type)
+            if distribution_type is not None
+            else normalize_distribution_type(self.type),
         )
 
 

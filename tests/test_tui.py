@@ -1,3 +1,4 @@
+import json
 from datetime import datetime
 import asyncio
 import threading
@@ -10,7 +11,7 @@ from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
-from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar, Static
+from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar, Select, Static
 
 
 def cell_text(value: object) -> str:
@@ -70,6 +71,11 @@ def fake_inventory() -> CloudFrontInventory:
                 last_modified_time=None,
             ),
         ),
+        distribution_types={
+            "E123": "Free",
+            "E4567890": "PAYG",
+            "E1234567890ABCDEFGHIJKL": "PAYG",
+        },
     )
 
 
@@ -176,7 +182,7 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert cell_plain(table.get_row_at(1)[6]) == "99.89 GB"
         assert cell_plain(table.get_row_at(1)[7]) == "-"
         assert cell_plain(table.get_row_at(1)[8]) == "99.89K"
-        assert cell_plain(table.get_row_at(2)[2]) == "-"
+        assert cell_plain(table.get_row_at(2)[2]) == "PAYG"
         assert cell_plain(table.get_row_at(2)[4]) == "●"
         assert cell_plain(table.get_row_at(2)[5]) == "-"
         assert cell_plain(table.get_row_at(2)[6]) == "998.90 GB"
@@ -206,6 +212,7 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.screen.query_one("#distribution-detail-title", Static).content == "marketing"
         assert app.screen.query_one("#distribution-detail-subtitle", Static).content == "E4567890"
         assert app.screen.query_one("#distribution-detail-id", Static).content == "E4567890"
+        assert app.screen.query_one("#distribution-detail-type", Select).value == "PAYG"
         assert app.screen.query_one("#distribution-detail-domain", Static).content == "d222.cloudfront.net"
         assert app.screen.query_one("#distribution-detail-status", Static).content == "InProgress"
         assert app.screen.query_one("#distribution-detail-enabled", Static).content == "No"
@@ -218,14 +225,56 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.screen.query_one("#distribution-detail-upload", Static).content == "-"
         assert app.screen.query_one("#distribution-detail-requests", Static).content == "99,890"
         assert app.screen.query_one("#distribution-detail-month", Static).content == "2026-05"
-        assert app.screen.query_one("#distribution-action-origin", Button).disabled
-        assert app.screen.query_one("#distribution-action-cache", Button).disabled
-        assert app.screen.query_one("#distribution-action-disable", Button).disabled
+        assert app.screen.query_one("#distribution-detail-cancel", Button)
+        assert app.screen.query_one("#distribution-detail-save", Button)
 
         await pilot.press("escape")
         await pilot.pause()
 
         assert not isinstance(app.screen, DistributionDetailScreen)
+
+
+def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
+    asyncio.run(_assert_tui_updates_distribution_plan_type_and_caches_it(tmp_path))
+
+
+async def _assert_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        table = app.query_one("#distributions")
+        assert cell_plain(table.get_row_at(1)[2]) == "PAYG"
+
+        table.focus()
+        await pilot.press("down")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        select = app.screen.query_one("#distribution-detail-type", Select)
+        assert select.value == "PAYG"
+
+        select.value = "Free"
+        await pilot.pause()
+        assert select.value == "Free"
+
+        await pilot.press("tab")
+        await pilot.press("tab")
+        await pilot.press("enter")
+        await pilot.pause()
+
+        table = app.query_one("#distributions")
+        assert cell_plain(table.get_row_at(1)[2]) == "Free"
+
+        payload = json.loads(app.paths.profile_state_file("dev").read_text(encoding="utf-8"))
+        assert payload["distributions"]["E4567890"]["type"] == "Free"
 
 
 def test_tui_shows_loading_panel_while_refreshing_data(tmp_path) -> None:

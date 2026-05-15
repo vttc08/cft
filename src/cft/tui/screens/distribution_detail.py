@@ -6,15 +6,16 @@ from decimal import Decimal, ROUND_HALF_UP
 from textual.app import ComposeResult
 from textual.containers import Container, Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
-from textual.widgets import Button, Label, Static
+from textual.widgets import Button, Label, Select, Static
 
+from cft.models.cache import normalize_distribution_type
 from cft.models.cache import SourceMetrics
 from cft.models.distribution import DistributionSummary
 
 BYTES_PER_GB = Decimal("1000000000")
 
 
-class DistributionDetailScreen(ModalScreen[None]):
+class DistributionDetailScreen(ModalScreen[str | None]):
     BINDINGS = [
         ("escape", "close", "Close"),
         ("q", "close", "Close"),
@@ -24,10 +25,12 @@ class DistributionDetailScreen(ModalScreen[None]):
         self,
         *,
         distribution: DistributionSummary,
+        distribution_type: str,
         usage: SourceMetrics,
     ) -> None:
         super().__init__()
         self.distribution = distribution
+        self.distribution_type = normalize_distribution_type(distribution_type)
         self.usage = usage
 
     def compose(self) -> ComposeResult:
@@ -44,6 +47,11 @@ class DistributionDetailScreen(ModalScreen[None]):
                 with VerticalScroll(id="distribution-detail-content"):
                     yield Static("Attributes", classes="distribution-detail-section-title")
                     yield self._row("ID", self.distribution.distribution_id, "distribution-detail-id")
+                    yield self._row_type(
+                        "Plan type",
+                        self.distribution_type,
+                        "distribution-detail-type",
+                    )
                     yield self._row("ARN", self.distribution.arn, "distribution-detail-arn")
                     yield self._row("Domain", self.distribution.domain_name, "distribution-detail-domain")
                     yield self._row("Status", self.distribution.status, "distribution-detail-status")
@@ -98,35 +106,25 @@ class DistributionDetailScreen(ModalScreen[None]):
                 yield Static("Actions", classes="distribution-detail-section-title")
                 with Grid(id="distribution-detail-actions"):
                     yield Button(
-                        "Change Origin",
-                        id="distribution-action-origin",
+                        "Cancel",
+                        id="distribution-detail-cancel",
                         compact="compact",
-                        disabled=True,
                     )
                     yield Button(
-                        "Edit Cache",
-                        id="distribution-action-cache",
-                        compact="compact",
-                        disabled=True,
-                    )
-                    yield Button(
-                        "Disable",
-                        id="distribution-action-disable",
-                        compact="compact",
-                        disabled=True,
-                    )
-                    yield Button(
-                        "Close",
-                        id="distribution-detail-close",
+                        "Save",
+                        id="distribution-detail-save",
                         variant="primary",
                         compact="compact",
                     )
 
     def on_mount(self) -> None:
-        self.query_one("#distribution-detail-close", Button).focus()
+        self.query_one("#distribution-detail-type", Select).focus()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "distribution-detail-close":
+        if event.button.id == "distribution-detail-save":
+            selected = self.query_one("#distribution-detail-type", Select).value
+            self.dismiss(normalize_distribution_type(selected))
+        elif event.button.id == "distribution-detail-cancel":
             self.dismiss(None)
 
     def action_close(self) -> None:
@@ -137,6 +135,17 @@ class DistributionDetailScreen(ModalScreen[None]):
         return Horizontal(
             Label(label, classes="distribution-detail-key"),
             Static(value or "-", id=value_id, classes="distribution-detail-value"),
+            classes="distribution-detail-row",
+        )
+
+    def _row_type(self, label: str, value: str, value_id: str) -> Horizontal:
+        return Horizontal(
+            Label(label, classes="distribution-detail-key"),
+            Select(
+                [("PAYG", "PAYG"), ("Free", "Free")],
+                value=value,
+                id=value_id,
+            ),
             classes="distribution-detail-row",
         )
 

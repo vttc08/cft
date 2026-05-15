@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from pathlib import Path
-from typing import TypeVar
 
 from rich.text import Text
 from textual import events
@@ -37,7 +36,7 @@ from cft.config.settings import (
     settings_profile_name,
 )
 from cft.data_exports import BillingSnapshot, CurDataExportService
-from cft.models.cache import SourceMetrics
+from cft.models.cache import SourceMetrics, normalize_distribution_type
 from cft.models.distribution import DistributionSummary
 from cft.tui.screens.cur_export_setup import (
     CurExportSetupResult,
@@ -49,7 +48,6 @@ from cft.tui.screens.distribution_detail import DistributionDetailScreen
 InventoryLoader = Callable[[], CloudFrontInventory]
 UsageLoader = Callable[[CloudFrontInventory], dict[str, SourceMetrics]]
 BillingLoader = Callable[[], BillingSnapshot]
-T = TypeVar("T")
 
 @dataclass(frozen=True)
 class TableColumnSpec:
@@ -448,7 +446,6 @@ TABLE_COLUMNS: tuple[TableColumnSpec, ...] = (
     TableColumnSpec("req", "Req", min_width=5, preferred_width=6, max_width=6, priority=0, align="right", gap_after=0),
 )
 
-TABLE_TYPE_PLACEHOLDERS: tuple[str, ...] = ("Free", "PAYG", "-")
 BYTES_PER_GB = Decimal("1000000000")
 TRANSFER_PLACEHOLDERS: tuple[tuple[int, int], ...] = (
     (1_234_000_000, 1_200_000_000),
@@ -599,6 +596,7 @@ class CftApp(App[None]):
             return
 
         usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
+        distribution_type = self._distribution_type_for(distribution.distribution_id)
         comment = distribution.comment or "-"
         self.query_one("#status", Static).update(
             f"Opened distribution {distribution.distribution_id}: {comment}"
@@ -606,8 +604,13 @@ class CftApp(App[None]):
         self.push_screen(
             DistributionDetailScreen(
                 distribution=distribution,
+                distribution_type=distribution_type,
                 usage=usage,
-            )
+            ),
+            lambda result: self._handle_distribution_detail_result(
+                distribution_id=distribution.distribution_id,
+                selected_type=result,
+            ),
         )
 
     def _check_resize(self) -> None:
@@ -801,6 +804,48 @@ class CftApp(App[None]):
                 return distribution
         return None
 
+    def _distribution_type_for(self, distribution_id: str) -> str:
+        if self.inventory is None:
+            return "PAYG"
+        return normalize_distribution_type(self.inventory.distribution_types.get(distribution_id))
+
+    def _handle_distribution_detail_result(
+        self,
+        *,
+        distribution_id: str,
+        selected_type: str | None,
+    ) -> None:
+        if selected_type is None:
+            return
+
+        normalized_type = normalize_distribution_type(selected_type)
+        profile_name = self.inventory.profile_name if self.inventory else self.settings_profile_name
+        try:
+            self._inventory_service.save_distribution_type(
+                profile_name=profile_name,
+                distribution_id=distribution_id,
+                distribution_type=normalized_type,
+            )
+        except Exception as error:  # pragma: no cover - filesystem errors are environment-specific.
+            message = f"Failed to save plan type for {distribution_id}: {error}"
+            self.query_one("#status", Static).update(message)
+            self.notify(message, title="cft plan type", severity="error", timeout=3)
+            return
+
+        if self.inventory is not None:
+            self.inventory = replace(
+                self.inventory,
+                distribution_types={
+                    **self.inventory.distribution_types,
+                    distribution_id: normalized_type,
+                },
+            )
+
+        self._refresh_distribution_table()
+        message = f"Saved {normalized_type} plan type for {distribution_id}."
+        self.query_one("#status", Static).update(message)
+        self.notify(message, title="cft plan type", severity="information", timeout=2.5)
+
     def _populate_rows(
         self,
         table: DataTable[str],
@@ -820,7 +865,7 @@ class CftApp(App[None]):
                 column_map["up"].visible_width,
             ),
         )
-        for index, distribution in enumerate(distributions):
+        for distribution in distributions:
             usage = self.usage_by_distribution.get(distribution.distribution_id, SourceMetrics())
             table.add_row(
                 self._render_column_value(
@@ -830,7 +875,7 @@ class CftApp(App[None]):
                     column_map["comment"], distribution.comment or "-"
                 ),
                 self._render_column_value(
-                    column_map["type"], self._demo_value(TABLE_TYPE_PLACEHOLDERS, index)
+                    column_map["type"], self._distribution_type_for(distribution.distribution_id)
                 ),
                 self._render_column_value(
                     column_map["url"], distribution.domain_name or "-"
@@ -967,10 +1012,6 @@ class CftApp(App[None]):
 
     def _available_table_width(self) -> int:
         return max(0, self.size.width - 6)
-
-    @staticmethod
-    def _demo_value(values: tuple[T, ...], index: int) -> T:
-        return values[index % len(values)]
 
     @staticmethod
     def _resolve_transfer_format(values: tuple[int, ...], *, width: int) -> TransferFormatSpec:

@@ -183,6 +183,25 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     assert round_tripped.distributions["E123"].cwl.requests == 15
 
 
+def test_distribution_cache_record_defaults_plan_type_to_payg() -> None:
+    record = DistributionCacheRecord.from_payload(
+        "E123",
+        {
+            "inventory": {"comment": "site"},
+        },
+    )
+    legacy = DistributionCacheRecord.from_payload(
+        "E123",
+        {
+            "type": "unknown",
+            "inventory": {"comment": "site"},
+        },
+    )
+
+    assert record.type == "PAYG"
+    assert legacy.type == "PAYG"
+
+
 def test_cache_policy_uses_utc_timestamps() -> None:
     updated = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
     policy = CachePolicy(ttl=timedelta(hours=1))

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any, Callable
 
@@ -15,7 +15,7 @@ from cft.cache.policies import (
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
-from cft.models.cache import ProfileCacheState
+from cft.models.cache import DistributionCacheRecord, ProfileCacheState, normalize_distribution_type
 from cft.models.distribution import DistributionSummary, normalize_distribution
 
 SessionFactory = Callable[..., boto3.Session]
@@ -33,6 +33,7 @@ class CloudFrontInventory:
     profile_name: str
     identity: AccountIdentity | None
     distributions: tuple[DistributionSummary, ...]
+    distribution_types: dict[str, str] = field(default_factory=dict)
     cache_last_updated: datetime | None = None
     from_cache: bool = False
 
@@ -102,8 +103,16 @@ class CloudFrontInventoryService:
             },
             last_updated=now,
         )
+        refreshed_inventory = CloudFrontInventory(
+            profile_name=profile_name,
+            identity=inventory.identity,
+            distributions=inventory.distributions,
+            distribution_types=_distribution_types_from_state(refreshed_state),
+            cache_last_updated=now,
+            from_cache=False,
+        )
         cache_store.write(refreshed_state.to_payload())
-        return inventory
+        return refreshed_inventory
 
     def _load_from_aws(
         self,
@@ -118,6 +127,7 @@ class CloudFrontInventoryService:
             profile_name=profile_name,
             identity=identity,
             distributions=distributions,
+            distribution_types={},
             cache_last_updated=loaded_at,
             from_cache=False,
         )
@@ -155,9 +165,37 @@ class CloudFrontInventoryService:
             profile_name=state.profile_name,
             identity=_identity_from_cache(state.identity),
             distributions=distributions,
+            distribution_types=_distribution_types_from_state(state),
             cache_last_updated=state.last_updated,
             from_cache=True,
         )
+
+    def save_distribution_type(
+        self,
+        *,
+        profile_name: str,
+        distribution_id: str,
+        distribution_type: str,
+    ) -> None:
+        normalized_type = normalize_distribution_type(distribution_type)
+        self.paths.ensure_profile_dirs(profile_name)
+        cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
+        state = ProfileCacheState.from_payload(cache_store.read(), profile_name=profile_name)
+        existing = state.distributions.get(distribution_id)
+        if existing is None:
+            updated_distributions = {
+                **state.distributions,
+                distribution_id: DistributionCacheRecord(
+                    distribution_id=distribution_id,
+                    type=normalized_type,
+                ),
+            }
+        else:
+            updated_distributions = {
+                **state.distributions,
+                distribution_id: replace(existing, type=normalized_type),
+            }
+        cache_store.write(replace(state, distributions=updated_distributions).to_payload())
 
 
 def _identity_to_cache(identity: AccountIdentity | None) -> dict[str, str] | None:
@@ -216,3 +254,11 @@ def _distribution_from_cache(payload: dict[str, Any]) -> DistributionSummary:
         origins=tuple(str(origin) for origin in origins),
         last_modified_time=parse_utc_datetime(payload.get("last_modified_time")),
     )
+
+
+def _distribution_types_from_state(state: ProfileCacheState) -> dict[str, str]:
+    return {
+        distribution_id: normalize_distribution_type(record.type)
+        for distribution_id, record in state.distributions.items()
+        if distribution_id
+    }

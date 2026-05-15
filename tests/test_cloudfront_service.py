@@ -62,6 +62,124 @@ def test_cloudfront_inventory_service_reads_identity_and_distributions() -> None
     assert distributions[0].distribution_id == "E123"
 
 
+def test_cloudfront_inventory_service_loads_cached_distribution_types(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(distribution_ttl_seconds=3600))
+    state = {
+        "schema_version": 1,
+        "profile_name": "dev",
+        "last_updated": "2026-05-13T12:00:00Z",
+        "distributions": {
+            "E123": {
+                "distribution_id": "E123",
+                "type": "Free",
+                "inventory": {
+                    "comment": "site",
+                    "domain_name": "d111.cloudfront.net",
+                },
+            }
+        },
+    }
+    paths.profile_state_file("dev").parent.mkdir(parents=True, exist_ok=True)
+    paths.profile_state_file("dev").write_text(json.dumps(state), encoding="utf-8")
+
+    class CachedOnlySession(FakeSession):
+        def client(self, service_name: str) -> object:
+            raise AssertionError(f"cache hit should not call {service_name}")
+
+    inventory = CloudFrontInventoryService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: CachedOnlySession(),  # type: ignore[arg-type]
+        now=lambda: now,
+    ).load()
+
+    assert inventory.from_cache is True
+    assert inventory.distribution_types["E123"] == "Free"
+
+
+def test_cloudfront_inventory_service_saves_distribution_type_to_cache(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    service = CloudFrontInventoryService(profile_name="dev", paths=paths)
+
+    service.save_distribution_type(
+        profile_name="dev",
+        distribution_id="E123",
+        distribution_type="Free",
+    )
+
+    payload = json.loads(paths.profile_state_file("dev").read_text(encoding="utf-8"))
+    assert payload["distributions"]["E123"]["type"] == "Free"
+
+
+def test_cloudfront_inventory_service_refresh_preserves_manual_distribution_type(
+    tmp_path,
+) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(distribution_ttl_seconds=3600))
+    state = {
+        "schema_version": 1,
+        "profile_name": "dev",
+        "last_updated": "2026-05-13T10:00:00Z",
+        "distributions": {
+            "E123": {
+                "distribution_id": "E123",
+                "type": "Free",
+                "inventory": {
+                    "comment": "site",
+                    "domain_name": "d111.cloudfront.net",
+                },
+            }
+        },
+    }
+    paths.profile_state_file("dev").parent.mkdir(parents=True, exist_ok=True)
+    paths.profile_state_file("dev").write_text(json.dumps(state), encoding="utf-8")
+
+    class UpdatedPaginator:
+        def paginate(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "DistributionList": {
+                        "Items": [
+                            {
+                                "Id": "E123",
+                                "Comment": "site",
+                                "DomainName": "d111.cloudfront.net",
+                                "Enabled": True,
+                                "Status": "Deployed",
+                            }
+                        ]
+                    }
+                }
+            ]
+
+    class UpdatedCloudFrontClient:
+        def get_paginator(self, name: str) -> UpdatedPaginator:
+            assert name == "list_distributions"
+            return UpdatedPaginator()
+
+    class UpdatedSession(FakeSession):
+        def client(self, service_name: str) -> object:
+            if service_name == "cloudfront":
+                return UpdatedCloudFrontClient()
+            return super().client(service_name)
+
+    inventory = CloudFrontInventoryService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: UpdatedSession(),  # type: ignore[arg-type]
+        now=lambda: now,
+    ).load(refresh=True)
+
+    payload = json.loads(paths.profile_state_file("dev").read_text(encoding="utf-8"))
+    assert inventory.distribution_types["E123"] == "Free"
+    assert payload["distributions"]["E123"]["type"] == "Free"
+
+
 def test_cloudfront_inventory_service_writes_and_reads_fresh_cache(tmp_path) -> None:
     paths = AppPaths.from_base(tmp_path / "cft")
     now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)

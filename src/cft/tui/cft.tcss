@@ -390,11 +390,15 @@ ProgressBar#summary-requests-card-bar > Bar {
     color: $foreground;
 }
 
+Select#distribution-detail-type {
+    width: 1fr;
+}
+
 #distribution-detail-actions {
     width: 100%;
     height: auto;
     margin-top: 0;
-    grid-size: 2 2;
+    grid-size: 2 1;
     grid-gutter: 0 1;
 }
 
