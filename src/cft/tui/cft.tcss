@@ -85,8 +85,8 @@ Footer {
 #summary-intro,
 #summary-trends,
 #summary-budget,
-#summary-cur-export {
-    width: 1fr;
+#summary-cur-export,
+#summary-cwl-logs {
     height: auto;
     background: $panel;
     border: solid #3a4047;
@@ -94,7 +94,17 @@ Footer {
 }
 
 #summary-intro {
+    width: 2fr;
     margin-right: 1;
+}
+
+#summary-cur-export {
+    width: 2fr;
+    margin-right: 1;
+}
+
+#summary-cwl-logs {
+    width: 1fr;
 }
 
 #summary-metrics {
@@ -177,6 +187,15 @@ Footer {
 }
 
 #summary-cur-export-detail {
+    color: $text-muted;
+    margin-bottom: 0;
+}
+
+#summary-cwl-logs-log-group {
+    color: $primary;
+}
+
+#summary-cwl-logs-detail {
     color: $text-muted;
     margin-bottom: 0;
 }
@@ -282,7 +301,7 @@ ProgressBar#summary-requests-card-bar > Bar {
 }
 
 .distribution-preview-value {
-    width: 18;
+    width: 21;
     color: $foreground;
     text-align: right;
 }
@@ -299,38 +318,44 @@ ProgressBar#summary-requests-card-bar > Bar {
     background: #00000066;
 }
 
-#cur-export-dialog {
+#cur-export-dialog,
+#cwl-log-group-dialog {
     width: 72;
     max-width: 90%;
     height: auto;
     padding: 1 2;
 }
 
-#cur-export-title {
+#cur-export-title,
+#cwl-log-group-title {
     color: $primary;
     text-style: bold;
     margin-bottom: 1;
 }
 
-#cur-export-error {
+#cur-export-error,
+#cwl-log-group-error {
     color: $error;
     height: auto;
     margin-bottom: 1;
 }
 
-.cur-export-label {
+.cur-export-label,
+.cwl-log-group-label {
     color: $text-muted;
     text-style: bold;
     margin-top: 1;
 }
 
-#cur-export-bucket-list {
+#cur-export-bucket-list,
+#cwl-log-group-list {
     height: 10;
     border: solid #3a4047;
     margin-bottom: 1;
 }
 
-#cur-export-empty {
+#cur-export-empty,
+#cwl-log-group-empty {
     color: $text-muted;
     border: solid #3a4047;
     padding: 1;
@@ -342,13 +367,19 @@ ProgressBar#summary-requests-card-bar > Bar {
     width: 100%;
 }
 
-#cur-export-actions {
+#cwl-log-group-input {
+    width: 100%;
+}
+
+#cur-export-actions,
+#cwl-log-group-actions {
     width: 100%;
     height: auto;
     margin-top: 1;
 }
 
-#cur-export-actions Button {
+#cur-export-actions Button,
+#cwl-log-group-actions Button {
     margin-right: 1;
 }
 

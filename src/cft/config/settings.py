@@ -26,6 +26,7 @@ class CacheSettings:
 class AwsSettings:
     default_profile: str | None = None
     cloudfront_region: str = "us-east-1"
+    cwl_log_group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,7 @@ class AppSettings:
             aws=AwsSettings(
                 default_profile=_none_if_blank(aws.get("default_profile")),
                 cloudfront_region=str(aws.get("cloudfront_region") or "us-east-1"),
+                cwl_log_group=_none_if_blank(aws.get("cwl_log_group")),
             ),
             cache=CacheSettings(
                 distribution_ttl_seconds=_positive_int(
@@ -123,6 +125,17 @@ def display_data_export_prefix(prefix: str | None) -> str:
     return f"/{normalized}" if normalized else "/"
 
 
+def display_cwl_log_group(log_group: str | None) -> str:
+    if log_group is None:
+        return "Not configured"
+    text = str(log_group).strip()
+    if not text:
+        return "Not configured"
+    if ":log-group:" in text:
+        return text.rsplit(":log-group:", 1)[-1].removesuffix(":*")
+    return text.removesuffix(":*")
+
+
 def save_data_export_settings(
     *,
     bucket: str,
@@ -150,6 +163,29 @@ def save_data_export_settings(
     target.write_text(tomlkit.dumps(document), encoding="utf-8")
 
 
+def save_cwl_log_group_settings(
+    *,
+    log_group: str,
+    paths: AppPaths | None = None,
+    profile_name: str | None = None,
+) -> None:
+    if paths is None:
+        from cft.config.paths import get_app_paths
+
+        paths = get_app_paths()
+
+    profile_name = settings_profile_name(profile_name)
+    paths.ensure_base_dirs()
+    target = paths.profile_config_file(profile_name)
+    if not target.exists():
+        target.write_text(default_profile_config_text(), encoding="utf-8")
+
+    document = tomlkit.parse(target.read_text(encoding="utf-8"))
+    aws = _ensure_table(document, "aws")
+    aws["cwl_log_group"] = log_group.strip()
+    target.write_text(tomlkit.dumps(document), encoding="utf-8")
+
+
 def default_config_text() -> str:
     document = tomlkit.document()
     document.add(tomlkit.comment("cft local application settings. AWS credentials stay in ~/.aws."))
@@ -159,6 +195,7 @@ def default_config_text() -> str:
     aws.add(tomlkit.comment("Leave blank to use boto3's default profile resolution."))
     aws["default_profile"] = ""
     aws["cloudfront_region"] = "us-east-1"
+    aws["cwl_log_group"] = ""
     document["aws"] = aws
 
     cache = tomlkit.table()
@@ -187,6 +224,7 @@ def default_profile_config_text() -> str:
     aws = tomlkit.table()
     aws.add(tomlkit.comment("Optional profile name override. Leave blank to use the CLI/session profile."))
     aws["default_profile"] = ""
+    aws["cwl_log_group"] = ""
     document["aws"] = aws
 
     data_export = tomlkit.table()

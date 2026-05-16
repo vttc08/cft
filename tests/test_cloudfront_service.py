@@ -32,20 +32,33 @@ class FakeCloudFrontClient:
 
 
 class FakeLogsPaginator:
-    def __init__(self, deliveries: list[dict[str, object]] | None = None) -> None:
-        self.deliveries = deliveries or []
+    def __init__(
+        self,
+        items: list[dict[str, object]] | None = None,
+        *,
+        page_key: str = "deliveries",
+    ) -> None:
+        self.items = items or []
+        self.page_key = page_key
 
     def paginate(self) -> list[dict[str, object]]:
-        return [{"deliveries": self.deliveries}]
+        return [{self.page_key: self.items}]
 
 
 class FakeLogsClient:
-    def __init__(self, deliveries: list[dict[str, object]] | None = None) -> None:
+    def __init__(
+        self,
+        deliveries: list[dict[str, object]] | None = None,
+        destinations: list[dict[str, object]] | None = None,
+    ) -> None:
         self.deliveries = deliveries or []
+        self.destinations = destinations or []
 
     def get_paginator(self, name: str) -> FakeLogsPaginator:
-        assert name == "describe_deliveries"
-        return FakeLogsPaginator(self.deliveries)
+        assert name in {"describe_deliveries", "describe_delivery_destinations"}
+        if name == "describe_delivery_destinations":
+            return FakeLogsPaginator(self.destinations, page_key="deliveryDestinations")
+        return FakeLogsPaginator(self.deliveries, page_key="deliveries")
 
 
 class FakeStsClient:
@@ -390,3 +403,48 @@ def test_cloudfront_inventory_service_discovers_and_caches_standard_log_deliveri
     assert payload["distributions"]["E123"]["standard_logs"][0]["delivery_destination_type"] == "CWL"
     assert payload["distributions"]["E123"]["standard_logs"][1]["delivery_destination_type"] == "S3"
     assert payload["distributions"]["E123"]["standard_logs"][0]["last_updated"] == "2026-05-13T12:00:00Z"
+
+
+def test_cloudfront_inventory_service_resolves_delivery_destination_resource_arn(
+    tmp_path,
+) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(distribution_ttl_seconds=3600))
+
+    class DestinationSession(FakeSession):
+        def client(self, service_name: str) -> object:
+            if service_name == "logs":
+                return FakeLogsClient(
+                    deliveries=[
+                        {
+                            "id": "delivery-1",
+                            "arn": "arn:aws:logs:us-east-1:123456789012:delivery:delivery-1",
+                            "deliveryDestinationArn": "arn:aws:logs:us-east-1:123456789012:delivery-destination:dest-1",
+                            "deliveryDestinationType": "CWL",
+                            "deliverySourceName": "CreatedByCloudFront-E123-ACCESS_LOGS",
+                        }
+                    ],
+                    destinations=[
+                        {
+                            "arn": "arn:aws:logs:us-east-1:123456789012:delivery-destination:dest-1",
+                            "deliveryDestinationConfiguration": {
+                                "destinationResourceArn": "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+                            },
+                        }
+                    ],
+                )
+            return super().client(service_name)
+
+    inventory = CloudFrontInventoryService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: DestinationSession(),  # type: ignore[arg-type]
+        now=lambda: now,
+    ).load()
+
+    assert (
+        inventory.standard_log_deliveries["E123"][0].delivery_destination_resource_arn
+        == "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+    )

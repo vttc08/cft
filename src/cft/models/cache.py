@@ -103,6 +103,7 @@ class StandardLogDeliveryRecord:
     delivery_id: str
     delivery_arn: str | None = None
     delivery_destination_arn: str | None = None
+    delivery_destination_resource_arn: str | None = None
     delivery_destination_type: str | None = None
     delivery_source_name: str | None = None
     last_updated: datetime | None = None
@@ -118,6 +119,10 @@ class StandardLogDeliveryRecord:
             delivery_destination_arn=_string_or_none(
                 payload.get("delivery_destination_arn") or payload.get("deliveryDestinationArn")
             ),
+            delivery_destination_resource_arn=_string_or_none(
+                payload.get("delivery_destination_resource_arn")
+                or payload.get("deliveryDestinationResourceArn")
+            ),
             delivery_destination_type=normalize_delivery_destination_type(
                 payload.get("delivery_destination_type") or payload.get("deliveryDestinationType")
             ),
@@ -132,6 +137,7 @@ class StandardLogDeliveryRecord:
             "delivery_id": self.delivery_id,
             "delivery_arn": self.delivery_arn,
             "delivery_destination_arn": self.delivery_destination_arn,
+            "delivery_destination_resource_arn": self.delivery_destination_resource_arn,
             "delivery_destination_type": self.delivery_destination_type,
             "delivery_source_name": self.delivery_source_name,
         }
@@ -147,6 +153,7 @@ class SourceMetrics:
     requests: int | None = None
     last_updated: datetime | None = None
     month_key: str | None = None
+    source_key: str | None = None
 
     @classmethod
     def from_payload(cls, payload: object) -> SourceMetrics:
@@ -159,6 +166,7 @@ class SourceMetrics:
             requests=_int_or_none(payload.get("requests")),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
             month_key=_string_or_none(payload.get("month_key")),
+            source_key=_string_or_none(payload.get("source_key") or payload.get("source_fingerprint")),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -171,6 +179,7 @@ class SourceMetrics:
                     format_utc_datetime(self.last_updated) if self.last_updated else None
                 ),
                 "month_key": self.month_key,
+                "source_key": self.source_key,
             }
         )
 

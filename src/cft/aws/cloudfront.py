@@ -159,11 +159,14 @@ class CloudFrontInventoryService:
         state: ProfileCacheState,
         *,
         loaded_at: datetime,
-        ) -> CloudFrontInventory:
+    ) -> CloudFrontInventory:
         identity = self._get_identity(session)
         distributions = tuple(self._list_distributions(session))
         try:
-            standard_log_deliveries = self._list_standard_log_deliveries(session, loaded_at=loaded_at)
+            standard_log_deliveries = self._list_standard_log_deliveries(
+                session,
+                loaded_at=loaded_at,
+            )
         except Exception:
             standard_log_deliveries = _standard_log_deliveries_from_state(state)
         return CloudFrontInventory(
@@ -204,6 +207,9 @@ class CloudFrontInventoryService:
         loaded_at: datetime,
     ) -> dict[str, tuple[StandardLogDeliveryRecord, ...]]:
         client = session.client("logs")
+        destination_resource_arns = CloudFrontInventoryService._list_delivery_destination_resource_arns(
+            client
+        )
         paginator = client.get_paginator("describe_deliveries")
         grouped: dict[str, list[StandardLogDeliveryRecord]] = {}
         for page in paginator.paginate():
@@ -222,6 +228,9 @@ class CloudFrontInventoryService:
                         "id": delivery.get("id"),
                         "arn": delivery.get("arn"),
                         "deliveryDestinationArn": delivery.get("deliveryDestinationArn"),
+                        "deliveryDestinationResourceArn": destination_resource_arns.get(
+                            str(delivery.get("deliveryDestinationArn", "")).strip()
+                        ),
                         "deliveryDestinationType": delivery.get("deliveryDestinationType"),
                         "deliverySourceName": source_name,
                     }
@@ -234,6 +243,28 @@ class CloudFrontInventoryService:
             distribution_id: tuple(sorted(records, key=_standard_log_delivery_sort_key))
             for distribution_id, records in grouped.items()
         }
+
+    @staticmethod
+    def _list_delivery_destination_resource_arns(
+        logs_client: object,
+    ) -> dict[str, str]:
+        paginator = logs_client.get_paginator("describe_delivery_destinations")
+        destination_resource_arns: dict[str, str] = {}
+        for page in paginator.paginate():
+            destinations: list[dict[str, Any]] = page.get("deliveryDestinations", []) or []
+            for destination in destinations:
+                if not isinstance(destination, dict):
+                    continue
+                delivery_destination_arn = str(destination.get("arn", "")).strip()
+                resource_arn = str(
+                    (
+                        destination.get("deliveryDestinationConfiguration") or {}
+                    ).get("destinationResourceArn", "")
+                ).strip()
+                resource_arn = _normalize_log_group_identifier(resource_arn)
+                if delivery_destination_arn and resource_arn:
+                    destination_resource_arns[delivery_destination_arn] = resource_arn
+        return destination_resource_arns
 
     @staticmethod
     def _inventory_from_cache(state: ProfileCacheState | None) -> CloudFrontInventory | None:
@@ -374,3 +405,12 @@ def _standard_log_delivery_sort_key(record: StandardLogDeliveryRecord) -> tuple[
         record.delivery_destination_arn or "",
         record.delivery_id or "",
     )
+
+
+def _normalize_log_group_identifier(value: str) -> str:
+    text = value.strip()
+    if text.endswith(":*"):
+        return text[:-2]
+    if text.endswith("*"):
+        return text[:-1]
+    return text

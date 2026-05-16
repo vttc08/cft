@@ -107,6 +107,14 @@ class DistributionDetailScreen(ModalScreen[str | None]):
                         "distribution-detail-logging-destination-arns",
                     )
                     yield self._row(
+                        "Resource ARN",
+                        self._format_delivery_values(
+                            self.standard_log_deliveries,
+                            "delivery_destination_resource_arn",
+                        ),
+                        "distribution-detail-logging-resource-arns",
+                    )
+                    yield self._row(
                         "Source name",
                         self._format_delivery_values(
                             self.standard_log_deliveries,

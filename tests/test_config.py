@@ -6,9 +6,11 @@ from cft.cache.policies import CachePolicy, format_utc_datetime, parse_utc_datet
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, profile_key
 from cft.config.settings import (
+    display_cwl_log_group,
     display_data_export_prefix,
     load_app_settings,
     normalize_data_export_prefix,
+    save_cwl_log_group_settings,
     save_data_export_settings,
 )
 from cft.models.cache import (
@@ -50,6 +52,7 @@ def test_load_app_settings_creates_human_editable_default_config(tmp_path) -> No
 
     assert paths.config_file.exists()
     assert settings.aws.cloudfront_region == "us-east-1"
+    assert settings.aws.cwl_log_group is None
     assert settings.cache.distribution_ttl_seconds == 3600
     assert settings.cache.data_export_manifest_check_seconds == 14400
     config_text = paths.config_file.read_text(encoding="utf-8")
@@ -68,6 +71,8 @@ def test_load_app_settings_merges_profile_specific_config(tmp_path) -> None:
 bucket = "profile-bucket"
 prefix = "profile-prefix"
 export_name = "profile-export"
+[aws]
+cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -78,6 +83,7 @@ export_name = "profile-export"
     assert settings.data_export.bucket == "profile-bucket"
     assert settings.data_export.prefix == "profile-prefix"
     assert settings.data_export.export_name == "profile-export"
+    assert settings.aws.cwl_log_group == "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
 
 
 def test_save_data_export_settings_writes_profile_file_and_round_trips(tmp_path) -> None:
@@ -102,6 +108,22 @@ def test_save_data_export_settings_writes_profile_file_and_round_trips(tmp_path)
     assert settings.data_export.export_name == "cur-export"
 
 
+def test_save_cwl_log_group_settings_writes_profile_file_and_round_trips(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+
+    save_cwl_log_group_settings(
+        paths=paths,
+        profile_name="dev",
+        log_group="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs:*",
+    )
+
+    settings = load_app_settings(paths, profile_name="dev", create=False)
+    profile_text = paths.profile_config_file("dev").read_text(encoding="utf-8")
+
+    assert 'cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs:*"' in profile_text
+    assert settings.aws.cwl_log_group == "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs:*"
+
+
 def test_data_export_prefix_helpers_normalize_and_display_root() -> None:
     assert normalize_data_export_prefix(None) is None
     assert normalize_data_export_prefix("") is None
@@ -110,6 +132,13 @@ def test_data_export_prefix_helpers_normalize_and_display_root() -> None:
     assert display_data_export_prefix(None) == "/"
     assert display_data_export_prefix("/") == "/"
     assert display_data_export_prefix("exports/monthly") == "/exports/monthly"
+
+
+def test_display_cwl_log_group_prefers_readable_name() -> None:
+    assert display_cwl_log_group(None) == "Not configured"
+    assert display_cwl_log_group("") == "Not configured"
+    assert display_cwl_log_group("cloudfrontlogs") == "cloudfrontlogs"
+    assert display_cwl_log_group("arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs:*") == "cloudfrontlogs"
 
 
 def test_json_file_store_round_trips_cache_payload(tmp_path) -> None:
@@ -168,6 +197,7 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
                         delivery_id="delivery-1",
                         delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-1",
                         delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1",
+                        delivery_destination_resource_arn="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs",
                         delivery_destination_type="CWL",
                         delivery_source_name="CreatedByCloudFront-E123-ACCESS_LOGS",
                     ),
@@ -191,6 +221,9 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     assert round_tripped.distributions["E123"].cw.month_key == "2026-05"
     assert round_tripped.distributions["E123"].s3.download == 10
     assert round_tripped.distributions["E123"].cwl.requests == 15
+    assert round_tripped.distributions["E123"].standard_logs[0].delivery_destination_resource_arn == (
+        "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+    )
     assert round_tripped.distributions["E123"].standard_logs[0].delivery_destination_type == "CWL"
 
 

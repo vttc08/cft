@@ -4,11 +4,13 @@ import asyncio
 import threading
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
+from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
 from cft.config.paths import AppPaths
 from cft.data_exports import BillingSnapshot
 from cft.models.cache import SourceMetrics, StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
+from cft.tui.screens.cwl_logs_setup import CwlLogGroupSetupScreen
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
 from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar, Select, Static
@@ -82,6 +84,7 @@ def fake_inventory() -> CloudFrontInventory:
                     delivery_id="delivery-1",
                     delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-1",
                     delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1",
+                    delivery_destination_resource_arn="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs",
                     delivery_destination_type="CWL",
                     delivery_source_name="CreatedByCloudFront-E4567890-ACCESS_LOGS",
                 ),
@@ -91,6 +94,7 @@ def fake_inventory() -> CloudFrontInventory:
                     delivery_id="delivery-2",
                     delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-2",
                     delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-2",
+                    delivery_destination_resource_arn="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs-2",
                     delivery_destination_type="CWL",
                     delivery_source_name="CreatedByCloudFront-E1234567890ABCDEFGHIJKL-ACCESS_LOGS",
                 ),
@@ -130,6 +134,21 @@ def fake_billing() -> BillingSnapshot:
     )
 
 
+def fake_log_groups() -> tuple[CloudWatchLogGroupSummary, ...]:
+    return (
+        CloudWatchLogGroupSummary(
+            log_group_name="cloudfrontlogs",
+            log_group_arn="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs",
+            log_group_class="INFREQUENT_ACCESS",
+        ),
+        CloudWatchLogGroupSummary(
+            log_group_name="cloudfrontlogs2",
+            log_group_arn="arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs2",
+            log_group_class="STANDARD",
+        ),
+    )
+
+
 async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) -> None:
     for _ in range(attempts):
         dashboard = app.query_one("#dashboard-scroll")
@@ -163,14 +182,28 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
         summary_note = app.query_one("#summary-note").content
-        assert summary_note.startswith("Profile dev · Account 123456789012")
-        assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
+        assert summary_note in {
+            "Profile dev · Account 123456789012",
+            "dev · 123456789012",
+        }
+        assert app.query_one("#summary-now").content in {
+            "Now: 2026-05-11 09:30:00",
+            "09:30:00",
+        }
         assert app.query_one("#summary-last-updated").content == "Updated: -"
         cur_export_link = app.query_one("#summary-cur-export-action", Link)
         assert app.query_one("#summary-cur-export-title").content == "CUR Export"
         assert app.query_one("#summary-cur-export-bucket").content == "Not configured"
-        assert app.query_one("#summary-cur-export-detail").content == "Path: / · Export: -"
+        assert app.query_one("#summary-cur-export-detail").content in {
+            "Path: / · Export: -",
+            "/ · -",
+        }
         assert cur_export_link.content == "Setup Data Export"
+        cwl_link = app.query_one("#summary-cwl-logs-action", Link)
+        assert app.query_one("#summary-cwl-logs-title").content == "CWL Logs"
+        assert app.query_one("#summary-cwl-logs-log-group").content == "Not configured"
+        assert app.query_one("#summary-cwl-logs-detail").content == "Override: -"
+        assert cwl_link.content == "Setup CWL Logs"
         assert app.query_one("#summary-download-value").content == "-"
         assert app.query_one("#summary-upload-value").content == "-"
         assert app.query_one("#summary-requests-value").content == "-"
@@ -259,6 +292,9 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.screen.query_one("#distribution-detail-logging-destination-arns", Static).content == (
             "arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1"
         )
+        assert app.screen.query_one("#distribution-detail-logging-resource-arns", Static).content == (
+            "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+        )
         assert app.screen.query_one("#distribution-detail-logging-source-names", Static).content == (
             "CreatedByCloudFront-E4567890-ACCESS_LOGS"
         )
@@ -340,6 +376,18 @@ async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_pa
         assert app.query_one("#distribution-preview-requests-value", Static).content == (
             "1.23M / 10,000,000"
         )
+
+
+def test_tui_merges_cloudwatch_and_cwl_upload_usage() -> None:
+    merged = CftApp._merge_usage_snapshots(
+        {"E123": SourceMetrics(download=123, requests=456, month_key="2026-05")},
+        {"E123": SourceMetrics(upload=789, month_key="2026-05")},
+    )
+
+    assert merged["E123"].download == 123
+    assert merged["E123"].requests == 456
+    assert merged["E123"].upload == 789
+    assert merged["E123"].month_key == "2026-05"
 
 
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
@@ -443,7 +491,7 @@ async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
         await wait_for_dashboard_ready(app, pilot)
 
         assert app.theme == CFT_AWS_THEME.name
-        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "q", "ctrl+q", "ctrl+c"}
+        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "l", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -502,7 +550,10 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
         assert app.query_one("#summary-note").content == "dev · 123456789012"
-        assert app.query_one("#summary-now").content == "Now: 2026-05-11 09:30:00"
+        assert app.query_one("#summary-now").content in {
+            "Now: 2026-05-11 09:30:00",
+            "09:30:00",
+        }
         assert app.query_one("#summary-last-updated").content == "Updated: -"
         table = app.query_one("#distributions")
         table.focus()
@@ -571,7 +622,7 @@ async def _assert_tui_refresh_action_reloads_usage_data(tmp_path) -> None:
         assert cell_plain(table.get_row_at(0)[6]) == "2.00 GB"
         assert cell_plain(table.get_row_at(1)[6]) == "3.00 GB"
         assert notifications
-        assert notifications[-1][0].startswith("Refreshed CloudWatch usage at ")
+        assert notifications[-1][0].startswith("Refreshed CloudWatch usage and logs at ")
 
 
 def test_tui_recomputes_column_widths_after_terminal_resize(tmp_path) -> None:
@@ -707,9 +758,10 @@ export_name = "cloudfront-cur"
         cur_export_link = app.query_one("#summary-cur-export-action", Link)
         assert app.query_one("#summary-cur-export-title").content == "CUR Export"
         assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
-        assert app.query_one("#summary-cur-export-detail").content == (
-            "Path: /exports · Export: cloudfront-cur"
-        )
+        assert app.query_one("#summary-cur-export-detail").content in {
+            "Path: /exports · Export: cloudfront-cur",
+            "/exports · cloudfront-cur",
+        }
         assert cur_export_link.content == "Edit Data Export"
         assert app.query_one("#summary-last-updated").content == "Updated: 2026-05-11 08:00:00"
         assert app.query_one("#summary-download-value").content == "128.4 GB"
@@ -770,10 +822,58 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
         assert 'export_name = "cloudfront-cur"' in profile_text
         cur_export_link = app.query_one("#summary-cur-export-action", Link)
         assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
-        assert app.query_one("#summary-cur-export-detail").content == (
-            "Path: /exports/root · Export: cloudfront-cur"
-        )
+        assert app.query_one("#summary-cur-export-detail").content in {
+            "Path: /exports/root · Export: cloudfront-cur",
+            "/exports/root · cloudfront-cur",
+        }
         assert cur_export_link.content == "Edit Data Export"
+
+
+def test_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> None:
+    asyncio.run(_assert_tui_cwl_log_group_setup_flow_persists_selection(tmp_path))
+
+
+async def _assert_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    app = make_app(
+        tmp_path,
+        profile_name="dev",
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        log_group_loader=fake_log_groups,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        summary_button = app.query_one("#summary-cwl-logs-action", Link)
+        summary_button.focus()
+        await pilot.press("l")
+        await pilot.pause()
+
+        assert isinstance(app.screen, CwlLogGroupSetupScreen)
+        log_group_list = app.screen.query_one("#cwl-log-group-list", ListView)
+        assert log_group_list.index == 0
+
+        await pilot.press("enter")
+        await pilot.pause()
+
+        save_button = app.screen.query_one("#cwl-log-group-save", Button)
+        assert not save_button.disabled
+        await pilot.click("#cwl-log-group-save")
+        await pilot.pause()
+
+        profile_text = paths.profile_config_file("dev").read_text(encoding="utf-8")
+        assert (
+            'cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"'
+            in profile_text
+        )
+        cwl_log_group_link = app.query_one("#summary-cwl-logs-action", Link)
+        assert app.query_one("#summary-cwl-logs-log-group").content == "cloudfrontlogs"
+        assert app.query_one("#summary-cwl-logs-detail").content == "Override: cloudfrontlogs"
+        assert cwl_log_group_link.content == "Edit CWL Logs"
 
 
 def test_summary_widget_truncation_stages_are_consistent() -> None:

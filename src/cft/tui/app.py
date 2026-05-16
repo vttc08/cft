@@ -28,11 +28,18 @@ from textual.widgets._progress_bar import Bar
 
 from cft.aws.cloudwatch import CloudFrontUsageService
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
+from cft.aws.cloudwatch_logs import (
+    CloudFrontLogsUploadService,
+    CloudWatchLogGroupDiscoveryService,
+    CloudWatchLogGroupSummary,
+)
 from cft.aws.s3 import S3BucketDiscoveryService
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import (
+    display_cwl_log_group,
     display_data_export_prefix,
     load_app_settings,
+    save_cwl_log_group_settings,
     save_data_export_settings,
     settings_profile_name,
 )
@@ -40,6 +47,11 @@ from cft.data_exports import BillingSnapshot, CurDataExportService
 from cft.models.cache import SourceMetrics, normalize_distribution_type
 from cft.models.cache import StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
+from cft.tui.screens.cwl_logs_setup import (
+    CwlLogGroupSetupResult,
+    CwlLogGroupSetupScreen,
+    CwlLogGroupStatus,
+)
 from cft.tui.screens.cur_export_setup import (
     CurExportSetupResult,
     CurExportSetupScreen,
@@ -97,6 +109,13 @@ class SetupDataExportLink(Link):
             app.action_setup_cur_export()
 
 
+class SetupCwlLogsLink(Link):
+    def action_open_link(self) -> None:
+        app = self.app
+        if isinstance(app, CftApp):
+            app.action_setup_cwl_logs()
+
+
 MOCK_SUMMARY_DATA = SummaryPreviewData(
     profile_name="dev",
     account_id="123456789012",
@@ -114,12 +133,14 @@ class SummaryWidgetShowcase(Vertical):
         data: SummaryPreviewData = MOCK_SUMMARY_DATA,
         account_id: str | None = None,
         cur_export_status: CurExportStatus | None = None,
+        cwl_log_group_status: CwlLogGroupStatus | None = None,
     ) -> None:
         super().__init__(id="summary-showcase")
         self.profile_name = profile_name
         self.data = data
         self.account_id = account_id or data.account_id
         self.cur_export_status = cur_export_status or CurExportStatus()
+        self.cwl_log_group_status = cwl_log_group_status or CwlLogGroupStatus()
         self.now_value: datetime | None = None
         self.last_updated_value: datetime | None = data.last_updated
 
@@ -136,6 +157,15 @@ class SummaryWidgetShowcase(Vertical):
                 yield SetupDataExportLink(
                     "Setup Data Export",
                     id="summary-cur-export-action",
+                    classes="link-button",
+                )
+            with Vertical(id="summary-cwl-logs", classes="summary-panel"):
+                yield Static("CWL Logs", classes="summary-panel-title", id="summary-cwl-logs-title")
+                yield Static("", classes="summary-note", id="summary-cwl-logs-log-group")
+                yield Static("", classes="summary-detail", id="summary-cwl-logs-detail")
+                yield SetupCwlLogsLink(
+                    "Setup CWL Logs",
+                    id="summary-cwl-logs-action",
                     classes="link-button",
                 )
 
@@ -203,6 +233,10 @@ class SummaryWidgetShowcase(Vertical):
         self.cur_export_status = status
         self._refresh_summary_layout()
 
+    def set_cwl_log_group_status(self, status: CwlLogGroupStatus) -> None:
+        self.cwl_log_group_status = status
+        self._refresh_summary_layout()
+
     def set_last_updated(self, last_updated: datetime | None) -> None:
         self.last_updated_value = last_updated
         self._refresh_summary_layout()
@@ -256,6 +290,16 @@ class SummaryWidgetShowcase(Vertical):
         )
         self.query_one("#summary-cur-export-action", SetupDataExportLink).update(
             "Edit Data Export" if self.cur_export_status.is_configured else "Setup Data Export"
+        )
+
+        self.query_one("#summary-cwl-logs-log-group", Static).update(
+            self._format_cwl_log_group_name(export_width)
+        )
+        self.query_one("#summary-cwl-logs-detail", Static).update(
+            self._format_cwl_log_group_detail(export_width)
+        )
+        self.query_one("#summary-cwl-logs-action", SetupCwlLogsLink).update(
+            "Edit CWL Logs" if self.cwl_log_group_status.is_configured else "Setup CWL Logs"
         )
 
     def _panel_content_width(self, widget_id: str) -> int:
@@ -312,6 +356,22 @@ class SummaryWidgetShowcase(Vertical):
             ]
         )
         return compact if len(compact) <= width else CftApp._truncate(compact, width)
+
+    def _format_cwl_log_group_name(self, width: int) -> str:
+        log_group = (
+            display_cwl_log_group(self.cwl_log_group_status.log_group)
+            if self.cwl_log_group_status.is_configured
+            else "Not configured"
+        )
+        return log_group if len(log_group) <= width else CftApp._truncate(log_group, width)
+
+    def _format_cwl_log_group_detail(self, width: int) -> str:
+        if not self.cwl_log_group_status.is_configured:
+            detail = "Override: -"
+            return detail if len(detail) <= width else CftApp._truncate(detail, width)
+
+        detail = f"Override: {display_cwl_log_group(self.cwl_log_group_status.log_group)}"
+        return detail if len(detail) <= width else CftApp._truncate(detail, width)
 
     @staticmethod
     def _metric_card(
@@ -655,6 +715,7 @@ class CftApp(App[None]):
     BINDINGS = [
         ("r", "refresh", "Refresh"),
         ("b", "setup_cur_export", "CUR Export"),
+        ("l", "setup_cwl_logs", "CWL Logs"),
         ("q", "quit", "Quit"),
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
@@ -667,6 +728,7 @@ class CftApp(App[None]):
         profile_name: str | None = None,
         inventory_loader: InventoryLoader | None = None,
         usage_loader: UsageLoader | None = None,
+        log_group_loader: Callable[[], tuple[CloudWatchLogGroupSummary, ...]] | None = None,
         bucket_loader: Callable[[], tuple[str, ...]] | None = None,
         billing_loader: BillingLoader | None = None,
         paths: AppPaths | None = None,
@@ -691,6 +753,14 @@ class CftApp(App[None]):
             profile_name=profile_name,
             paths=self.paths,
         )
+        self._logs_upload_service = CloudFrontLogsUploadService(
+            profile_name=profile_name,
+            paths=self.paths,
+        )
+        self._log_group_service = CloudWatchLogGroupDiscoveryService(
+            profile_name=profile_name,
+            paths=self.paths,
+        )
         self._bucket_service = S3BucketDiscoveryService(
             profile_name=profile_name,
             paths=self.paths,
@@ -701,10 +771,12 @@ class CftApp(App[None]):
         )
         self._inventory_loader_is_default = inventory_loader is None
         self._usage_loader_is_default = usage_loader is None
+        self._log_group_loader_is_default = log_group_loader is None
         self._bucket_loader_is_default = bucket_loader is None
         self._billing_loader_is_default = billing_loader is None
         self.inventory_loader = inventory_loader or self._inventory_service.load
         self.usage_loader = usage_loader or self._default_usage_loader
+        self.log_group_loader = log_group_loader or self._default_log_group_loader
         self.bucket_loader = bucket_loader or self._bucket_service.list_bucket_names
         self.billing_loader = billing_loader or self._billing_service.load
         self.now = now
@@ -727,6 +799,7 @@ class CftApp(App[None]):
                 yield SummaryWidgetShowcase(
                     profile_name=self.settings_profile_name,
                     cur_export_status=self._cur_export_status(),
+                    cwl_log_group_status=self._cwl_log_group_status(),
                 )
                 with Vertical(id="table-shell"):
                     yield DistributionUsagePreview()
@@ -749,9 +822,15 @@ class CftApp(App[None]):
     def action_setup_cur_export(self) -> None:
         self._open_cur_export_setup()
 
+    def action_setup_cwl_logs(self) -> None:
+        self._open_cwl_log_group_setup()
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "summary-cur-export-action":
             self._open_cur_export_setup()
+            event.stop()
+        if event.button.id == "summary-cwl-logs-action":
+            self._open_cwl_log_group_setup()
             event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -794,7 +873,7 @@ class CftApp(App[None]):
             return
 
         try:
-            self._set_loading_state(True, "Loading CloudWatch usage...")
+            self._set_loading_state(True, "Loading CloudWatch usage and logs...")
             self.usage_by_distribution = await asyncio.to_thread(
                 self._load_usage,
                 self.inventory,
@@ -828,7 +907,7 @@ class CftApp(App[None]):
         self._set_loading_state(False, f"Loaded CloudFront data at {self.now():%H:%M:%S}")
         if refresh:
             refreshed_at = self.now().strftime("%H:%M:%S")
-            message = f"Refreshed CloudWatch usage at {refreshed_at}"
+            message = f"Refreshed CloudWatch usage and logs at {refreshed_at}"
             self._set_status(message)
             self.notify(message, title="cft refresh", severity="information", timeout=2.5)
 
@@ -845,7 +924,11 @@ class CftApp(App[None]):
     ) -> dict[str, SourceMetrics]:
         if self._usage_loader_is_default:
             snapshot = self._usage_service.load(inventory, refresh=refresh)
-            return snapshot.usage_by_distribution
+            upload_snapshot = self._logs_upload_service.load(inventory, refresh=refresh)
+            return self._merge_usage_snapshots(
+                snapshot.usage_by_distribution,
+                upload_snapshot.upload_by_distribution,
+            )
         return self.usage_loader(inventory)
 
     def _set_loading_state(self, loading: bool, message: str) -> None:
@@ -887,6 +970,7 @@ class CftApp(App[None]):
             now=self.now(),
         )
         summary.set_cur_export_status(self._cur_export_status())
+        summary.set_cwl_log_group_status(self._cwl_log_group_status())
         summary.set_last_updated(self.billing_snapshot.data_end or self.billing_snapshot.last_updated)
 
     def _cur_export_status(self) -> CurExportStatus:
@@ -895,6 +979,9 @@ class CftApp(App[None]):
             prefix=self.settings.data_export.prefix,
             export_name=self.settings.data_export.export_name,
         )
+
+    def _cwl_log_group_status(self) -> CwlLogGroupStatus:
+        return CwlLogGroupStatus(log_group=self.settings.aws.cwl_log_group)
 
     def _open_cur_export_setup(self) -> None:
         error_message = None
@@ -912,6 +999,24 @@ class CftApp(App[None]):
                 error_message=error_message,
             ),
             self._handle_cur_export_setup_result,
+        )
+
+    def _open_cwl_log_group_setup(self) -> None:
+        error_message = None
+        try:
+            log_groups = self._load_log_groups()
+        except Exception as error:  # pragma: no cover - boto3 exception shapes vary.
+            log_groups = ()
+            error_message = f"Log group discovery failed: {error}"
+
+        self.push_screen(
+            CwlLogGroupSetupScreen(
+                profile_name=self.settings_profile_name,
+                log_groups=log_groups,
+                initial_status=self._cwl_log_group_status(),
+                error_message=error_message,
+            ),
+            self._handle_cwl_log_group_setup_result,
         )
 
     def _handle_cur_export_setup_result(
@@ -938,15 +1043,59 @@ class CftApp(App[None]):
             f"Linked CUR export bucket {result.bucket} for profile {self.settings_profile_name}."
         )
 
+    def _handle_cwl_log_group_setup_result(
+        self,
+        result: CwlLogGroupSetupResult | None,
+    ) -> None:
+        if result is None:
+            return
+
+        save_cwl_log_group_settings(
+            paths=self.paths,
+            profile_name=self.settings_profile_name,
+            log_group=result.log_group,
+        )
+        self.settings = load_app_settings(
+            self.paths,
+            profile_name=self.settings_profile_name,
+            create=False,
+        )
+        self._refresh_summary()
+        self._set_status(
+            f"Linked CloudWatch Logs override for profile {self.settings_profile_name}."
+        )
+        self.action_refresh()
+
     def _load_bucket_names(self) -> tuple[str, ...]:
         if self._bucket_loader_is_default:
             return self._bucket_service.list_bucket_names()
         return self.bucket_loader()
 
+    def _load_log_groups(self) -> tuple[CloudWatchLogGroupSummary, ...]:
+        if self._log_group_loader_is_default:
+            return self._log_group_service.list_log_groups()
+        return self.log_group_loader()
+
     def _load_billing(self, *, refresh: bool) -> BillingSnapshot:
         if self._billing_loader_is_default:
             return self._billing_service.load(refresh=refresh)
         return self.billing_loader()
+
+    @staticmethod
+    def _merge_usage_snapshots(
+        base_usage: dict[str, SourceMetrics],
+        upload_usage: dict[str, SourceMetrics],
+    ) -> dict[str, SourceMetrics]:
+        merged = dict(base_usage)
+        for distribution_id, upload in upload_usage.items():
+            existing = merged.get(distribution_id, SourceMetrics())
+            merged[distribution_id] = replace(
+                existing,
+                upload=upload.upload if upload.upload is not None else existing.upload,
+                last_updated=upload.last_updated or existing.last_updated,
+                month_key=upload.month_key or existing.month_key,
+            )
+        return merged
 
     def _refresh_distribution_table(self) -> None:
         if self.inventory is None:
@@ -1331,6 +1480,9 @@ class CftApp(App[None]):
     def _default_usage_loader(self, inventory: CloudFrontInventory) -> dict[str, SourceMetrics]:
         snapshot = CloudFrontUsageService(profile_name=inventory.profile_name).load(inventory)
         return snapshot.usage_by_distribution
+
+    def _default_log_group_loader(self) -> tuple[CloudWatchLogGroupSummary, ...]:
+        return self._log_group_service.list_log_groups()
 
 def run_tui(profile_name: str | None = None, *, watch_css: bool = False) -> None:
     CftApp(profile_name=profile_name, watch_css=watch_css).run()
