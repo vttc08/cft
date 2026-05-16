@@ -38,6 +38,7 @@ from cft.config.settings import (
 )
 from cft.data_exports import BillingSnapshot, CurDataExportService
 from cft.models.cache import SourceMetrics, normalize_distribution_type
+from cft.models.cache import StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.tui.screens.cur_export_setup import (
     CurExportSetupResult,
@@ -766,6 +767,7 @@ class CftApp(App[None]):
                 distribution=distribution,
                 distribution_type=distribution_type,
                 usage=usage,
+                standard_log_deliveries=self._standard_log_deliveries_for(distribution.distribution_id),
             ),
             lambda result: self._handle_distribution_detail_result(
                 distribution_id=distribution.distribution_id,
@@ -1082,7 +1084,10 @@ class CftApp(App[None]):
                 self._render_column_value(
                     column_map["on"], self._distribution_status_marker(distribution)
                 ),
-                self._render_column_value(column_map["log"], self._log_status_marker()),
+                self._render_column_value(
+                    column_map["log"],
+                    self._log_status_marker(distribution.distribution_id),
+                ),
                 self._render_column_value(
                     column_map["down"],
                     self._format_transfer_cell(usage.download, transfer_spec),
@@ -1109,9 +1114,41 @@ class CftApp(App[None]):
             return Text("●", style="green")
         return Text("◐", style="color(214)")
 
+    def _log_status_marker(self, distribution_id: str) -> Text:
+        deliveries = self._standard_log_deliveries_for(distribution_id)
+        marker = self._standard_log_marker(deliveries)
+        style = "color(214)"
+        if marker == "CWL":
+            style = "cyan"
+        elif marker == "S3":
+            style = "yellow"
+        elif marker == "MIX":
+            style = "magenta"
+        return Text(marker, style=style)
+
+    def _standard_log_deliveries_for(
+        self,
+        distribution_id: str,
+    ) -> tuple[StandardLogDeliveryRecord, ...]:
+        if self.inventory is None:
+            return ()
+        return self.inventory.standard_log_deliveries.get(distribution_id, ())
+
     @staticmethod
-    def _log_status_marker() -> Text:
-        return Text("-", style="color(214)")
+    def _standard_log_marker(deliveries: tuple[StandardLogDeliveryRecord, ...]) -> str:
+        if not deliveries:
+            return "-"
+        destination_types = {
+            str(delivery.delivery_destination_type or "").strip().upper()
+            for delivery in deliveries
+            if str(delivery.delivery_destination_type or "").strip()
+        }
+        destination_types.discard("")
+        if not destination_types:
+            return "-"
+        if len(destination_types) == 1:
+            return next(iter(destination_types))
+        return "MIX"
 
     @staticmethod
     def _truncate(value: str, width: int) -> str:

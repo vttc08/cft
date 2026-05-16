@@ -5,6 +5,7 @@ from cft.models.cache import (
     ProfileCacheState,
     ProfileSummaryCache,
     SourceMetrics,
+    StandardLogDeliveryRecord,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "ProfileCacheState",
     "ProfileSummaryCache",
     "SourceMetrics",
+    "StandardLogDeliveryRecord",
 ]

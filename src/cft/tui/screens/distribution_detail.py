@@ -8,8 +8,9 @@ from textual.containers import Container, Grid, Horizontal, Vertical, VerticalSc
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Select, Static
 
-from cft.models.cache import normalize_distribution_type
 from cft.models.cache import SourceMetrics
+from cft.models.cache import StandardLogDeliveryRecord
+from cft.models.cache import normalize_distribution_type
 from cft.models.distribution import DistributionSummary
 
 BYTES_PER_GB = Decimal("1000000000")
@@ -27,11 +28,13 @@ class DistributionDetailScreen(ModalScreen[str | None]):
         distribution: DistributionSummary,
         distribution_type: str,
         usage: SourceMetrics,
+        standard_log_deliveries: tuple[StandardLogDeliveryRecord, ...] = (),
     ) -> None:
         super().__init__()
         self.distribution = distribution
         self.distribution_type = normalize_distribution_type(distribution_type)
         self.usage = usage
+        self.standard_log_deliveries = standard_log_deliveries
 
     def compose(self) -> ComposeResult:
         title = self.distribution.comment or self.distribution.distribution_id or "Distribution"
@@ -74,6 +77,42 @@ class DistributionDetailScreen(ModalScreen[str | None]):
                         "Last modified",
                         self._format_datetime(self.distribution.last_modified_time),
                         "distribution-detail-last-modified",
+                    )
+
+                    yield Static("Logging", classes="distribution-detail-section-title")
+                    yield self._row(
+                        "Enabled",
+                        self._format_log_summary(self.standard_log_deliveries),
+                        "distribution-detail-logging-enabled",
+                    )
+                    yield self._row(
+                        "Delivery IDs",
+                        self._format_delivery_values(self.standard_log_deliveries, "delivery_id"),
+                        "distribution-detail-logging-delivery-ids",
+                    )
+                    yield self._row(
+                        "Destination type",
+                        self._format_delivery_values(
+                            self.standard_log_deliveries,
+                            "delivery_destination_type",
+                        ),
+                        "distribution-detail-logging-destination-types",
+                    )
+                    yield self._row(
+                        "Destination ARN",
+                        self._format_delivery_values(
+                            self.standard_log_deliveries,
+                            "delivery_destination_arn",
+                        ),
+                        "distribution-detail-logging-destination-arns",
+                    )
+                    yield self._row(
+                        "Source name",
+                        self._format_delivery_values(
+                            self.standard_log_deliveries,
+                            "delivery_source_name",
+                        ),
+                        "distribution-detail-logging-source-names",
                     )
 
                     yield Static("Usage", classes="distribution-detail-section-title")
@@ -152,6 +191,34 @@ class DistributionDetailScreen(ModalScreen[str | None]):
     @staticmethod
     def _format_sequence(values: tuple[str, ...]) -> str:
         return ", ".join(values) if values else "-"
+
+    @staticmethod
+    def _format_delivery_values(
+        deliveries: tuple[StandardLogDeliveryRecord, ...],
+        field_name: str,
+    ) -> str:
+        values = [
+            str(getattr(delivery, field_name, "")).strip()
+            for delivery in deliveries
+            if str(getattr(delivery, field_name, "")).strip()
+        ]
+        return "\n".join(values) if values else "-"
+
+    @staticmethod
+    def _format_log_summary(deliveries: tuple[StandardLogDeliveryRecord, ...]) -> str:
+        if not deliveries:
+            return "-"
+        destination_types = {
+            str(delivery.delivery_destination_type or "").strip().upper()
+            for delivery in deliveries
+            if str(delivery.delivery_destination_type or "").strip()
+        }
+        destination_types.discard("")
+        if not destination_types:
+            return "-"
+        if len(destination_types) == 1:
+            return next(iter(destination_types))
+        return "MIX"
 
     @staticmethod
     def _format_datetime(value: datetime | None) -> str:

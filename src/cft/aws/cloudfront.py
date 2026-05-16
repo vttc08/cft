@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
 from datetime import datetime
+import re
 from typing import Any, Callable
 
 import boto3
@@ -15,8 +16,15 @@ from cft.cache.policies import (
 from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
-from cft.models.cache import DistributionCacheRecord, ProfileCacheState, normalize_distribution_type
+from cft.models.cache import (
+    DistributionCacheRecord,
+    ProfileCacheState,
+    StandardLogDeliveryRecord,
+    normalize_distribution_type,
+)
 from cft.models.distribution import DistributionSummary, normalize_distribution
+
+STANDARD_LOG_SOURCE_RE = re.compile(r"^CreatedByCloudFront-(?P<distribution_id>[A-Za-z0-9]+)-")
 
 SessionFactory = Callable[..., boto3.Session]
 
@@ -34,6 +42,9 @@ class CloudFrontInventory:
     identity: AccountIdentity | None
     distributions: tuple[DistributionSummary, ...]
     distribution_types: dict[str, str] = field(default_factory=dict)
+    standard_log_deliveries: dict[str, tuple[StandardLogDeliveryRecord, ...]] = field(
+        default_factory=dict
+    )
     cache_last_updated: datetime | None = None
     from_cache: bool = False
 
@@ -81,12 +92,37 @@ class CloudFrontInventoryService:
             and not refresh
             and cache_policy.is_fresh(cache_last_updated, now=now)
         ):
+            try:
+                standard_log_deliveries = self._list_standard_log_deliveries(
+                    session,
+                    loaded_at=now,
+                )
+            except Exception:
+                cached_inventory = self._inventory_from_cache(state)
+                if cached_inventory is not None:
+                    return cached_inventory
+            else:
+                if standard_log_deliveries:
+                    refreshed_state = state.with_inventory(
+                        profile_name=profile_name,
+                        identity=state.identity,
+                        inventory={
+                            distribution_id: record.inventory
+                            for distribution_id, record in state.distributions.items()
+                        },
+                        last_updated=now,
+                        standard_log_deliveries=standard_log_deliveries,
+                    )
+                    cache_store.write(refreshed_state.to_payload())
+                    cached_inventory = self._inventory_from_cache(refreshed_state)
+                    if cached_inventory is not None:
+                        return cached_inventory
             cached_inventory = self._inventory_from_cache(state)
             if cached_inventory is not None:
                 return cached_inventory
 
         try:
-            inventory = self._load_from_aws(session, profile_name, loaded_at=now)
+            inventory = self._load_from_aws(session, profile_name, state, loaded_at=now)
         except Exception:
             cached_inventory = self._inventory_from_cache(state)
             if cached_inventory is not None:
@@ -102,12 +138,14 @@ class CloudFrontInventoryService:
                 if distribution.distribution_id
             },
             last_updated=now,
+            standard_log_deliveries=inventory.standard_log_deliveries,
         )
         refreshed_inventory = CloudFrontInventory(
             profile_name=profile_name,
             identity=inventory.identity,
             distributions=inventory.distributions,
             distribution_types=_distribution_types_from_state(refreshed_state),
+            standard_log_deliveries=_standard_log_deliveries_from_state(refreshed_state),
             cache_last_updated=now,
             from_cache=False,
         )
@@ -118,16 +156,22 @@ class CloudFrontInventoryService:
         self,
         session: boto3.Session,
         profile_name: str,
+        state: ProfileCacheState,
         *,
         loaded_at: datetime,
-    ) -> CloudFrontInventory:
+        ) -> CloudFrontInventory:
         identity = self._get_identity(session)
         distributions = tuple(self._list_distributions(session))
+        try:
+            standard_log_deliveries = self._list_standard_log_deliveries(session, loaded_at=loaded_at)
+        except Exception:
+            standard_log_deliveries = _standard_log_deliveries_from_state(state)
         return CloudFrontInventory(
             profile_name=profile_name,
             identity=identity,
             distributions=distributions,
             distribution_types={},
+            standard_log_deliveries=standard_log_deliveries,
             cache_last_updated=loaded_at,
             from_cache=False,
         )
@@ -154,6 +198,44 @@ class CloudFrontInventoryService:
         return distributions
 
     @staticmethod
+    def _list_standard_log_deliveries(
+        session: boto3.Session,
+        *,
+        loaded_at: datetime,
+    ) -> dict[str, tuple[StandardLogDeliveryRecord, ...]]:
+        client = session.client("logs")
+        paginator = client.get_paginator("describe_deliveries")
+        grouped: dict[str, list[StandardLogDeliveryRecord]] = {}
+        for page in paginator.paginate():
+            deliveries: list[dict[str, Any]] = page.get("deliveries", []) or []
+            for delivery in deliveries:
+                if not isinstance(delivery, dict):
+                    continue
+                source_name = str(delivery.get("deliverySourceName", "")).strip()
+                if "CreatedByCloudFront" not in source_name:
+                    continue
+                distribution_id = _distribution_id_from_source_name(source_name)
+                if not distribution_id:
+                    continue
+                record = StandardLogDeliveryRecord.from_payload(
+                    {
+                        "id": delivery.get("id"),
+                        "arn": delivery.get("arn"),
+                        "deliveryDestinationArn": delivery.get("deliveryDestinationArn"),
+                        "deliveryDestinationType": delivery.get("deliveryDestinationType"),
+                        "deliverySourceName": source_name,
+                    }
+                )
+                if not record.delivery_id:
+                    continue
+                record = replace(record, last_updated=loaded_at)
+                grouped.setdefault(distribution_id, []).append(record)
+        return {
+            distribution_id: tuple(sorted(records, key=_standard_log_delivery_sort_key))
+            for distribution_id, records in grouped.items()
+        }
+
+    @staticmethod
     def _inventory_from_cache(state: ProfileCacheState | None) -> CloudFrontInventory | None:
         if state is None:
             return None
@@ -166,6 +248,7 @@ class CloudFrontInventoryService:
             identity=_identity_from_cache(state.identity),
             distributions=distributions,
             distribution_types=_distribution_types_from_state(state),
+            standard_log_deliveries=_standard_log_deliveries_from_state(state),
             cache_last_updated=state.last_updated,
             from_cache=True,
         )
@@ -262,3 +345,32 @@ def _distribution_types_from_state(state: ProfileCacheState) -> dict[str, str]:
         for distribution_id, record in state.distributions.items()
         if distribution_id
     }
+
+
+def _standard_log_deliveries_from_state(
+    state: ProfileCacheState,
+) -> dict[str, tuple[StandardLogDeliveryRecord, ...]]:
+    return {
+        distribution_id: record.standard_logs
+        for distribution_id, record in state.distributions.items()
+        if distribution_id and record.standard_logs
+    }
+
+
+def _distribution_id_from_source_name(source_name: str) -> str | None:
+    match = STANDARD_LOG_SOURCE_RE.match(source_name)
+    if match:
+        return match.group("distribution_id")
+    parts = source_name.split("-")
+    if len(parts) >= 3 and parts[0] == "CreatedByCloudFront":
+        candidate = parts[1].strip()
+        return candidate or None
+    return None
+
+
+def _standard_log_delivery_sort_key(record: StandardLogDeliveryRecord) -> tuple[str, str, str]:
+    return (
+        record.delivery_destination_type or "",
+        record.delivery_destination_arn or "",
+        record.delivery_id or "",
+    )

@@ -31,6 +31,23 @@ class FakeCloudFrontClient:
         return FakePaginator()
 
 
+class FakeLogsPaginator:
+    def __init__(self, deliveries: list[dict[str, object]] | None = None) -> None:
+        self.deliveries = deliveries or []
+
+    def paginate(self) -> list[dict[str, object]]:
+        return [{"deliveries": self.deliveries}]
+
+
+class FakeLogsClient:
+    def __init__(self, deliveries: list[dict[str, object]] | None = None) -> None:
+        self.deliveries = deliveries or []
+
+    def get_paginator(self, name: str) -> FakeLogsPaginator:
+        assert name == "describe_deliveries"
+        return FakeLogsPaginator(self.deliveries)
+
+
 class FakeStsClient:
     def get_caller_identity(self) -> dict[str, str]:
         return {
@@ -48,6 +65,8 @@ class FakeSession:
             return FakeStsClient()
         if service_name == "cloudfront":
             return FakeCloudFrontClient()
+        if service_name == "logs":
+            return FakeLogsClient()
         raise AssertionError(service_name)
 
 
@@ -202,6 +221,7 @@ def test_cloudfront_inventory_service_writes_and_reads_fresh_cache(tmp_path) -> 
     assert "profile" in payload
     assert "s3_cur_bucket" not in payload["profile"]
     assert payload["distributions"]["E123"]["inventory"]["comment"] == "site"
+    assert "standard_logs" not in payload["distributions"]["E123"]
 
     class CachedOnlySession:
         profile_name = "dev"
@@ -318,3 +338,55 @@ def test_cloudfront_inventory_service_falls_back_to_stale_cache_on_aws_error(tmp
 
     assert cached.from_cache is True
     assert cached.distributions[0].distribution_id == "E123"
+
+
+def test_cloudfront_inventory_service_discovers_and_caches_standard_log_deliveries(
+    tmp_path,
+) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(distribution_ttl_seconds=3600))
+
+    class LogsSession(FakeSession):
+        def client(self, service_name: str) -> object:
+            if service_name == "logs":
+                return FakeLogsClient(
+                    deliveries=[
+                        {
+                            "id": "delivery-1",
+                            "arn": "arn:aws:logs:us-east-1:123456789012:delivery/delivery-1",
+                            "deliveryDestinationArn": "arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1",
+                            "deliveryDestinationType": "CWL",
+                            "deliverySourceName": "CreatedByCloudFront-E123-ACCESS_LOGS",
+                        },
+                        {
+                            "id": "delivery-2",
+                            "arn": "arn:aws:logs:us-east-1:123456789012:delivery/delivery-2",
+                            "deliveryDestinationArn": "arn:aws:s3:::example-bucket",
+                            "deliveryDestinationType": "S3",
+                            "deliverySourceName": "CreatedByCloudFront-E123-ACCESS_LOGS",
+                        },
+                        {
+                            "id": "ignored",
+                            "deliverySourceName": "SomethingElse",
+                        },
+                    ]
+                )
+            return super().client(service_name)
+
+    inventory = CloudFrontInventoryService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: LogsSession(),  # type: ignore[arg-type]
+        now=lambda: now,
+    ).load()
+
+    payload = json.loads(paths.profile_state_file("dev").read_text(encoding="utf-8"))
+
+    assert inventory.standard_log_deliveries["E123"][0].delivery_destination_type == "CWL"
+    assert inventory.standard_log_deliveries["E123"][1].delivery_destination_type == "S3"
+    assert inventory.standard_log_deliveries["E123"][0].last_updated == now
+    assert payload["distributions"]["E123"]["standard_logs"][0]["delivery_destination_type"] == "CWL"
+    assert payload["distributions"]["E123"]["standard_logs"][1]["delivery_destination_type"] == "S3"
+    assert payload["distributions"]["E123"]["standard_logs"][0]["last_updated"] == "2026-05-13T12:00:00Z"

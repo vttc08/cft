@@ -6,7 +6,7 @@ import threading
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.config.paths import AppPaths
 from cft.data_exports import BillingSnapshot
-from cft.models.cache import SourceMetrics
+from cft.models.cache import SourceMetrics, StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
@@ -75,6 +75,33 @@ def fake_inventory() -> CloudFrontInventory:
             "E123": "Free",
             "E4567890": "PAYG",
             "E1234567890ABCDEFGHIJKL": "PAYG",
+        },
+        standard_log_deliveries={
+            "E4567890": (
+                StandardLogDeliveryRecord(
+                    delivery_id="delivery-1",
+                    delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-1",
+                    delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1",
+                    delivery_destination_type="CWL",
+                    delivery_source_name="CreatedByCloudFront-E4567890-ACCESS_LOGS",
+                ),
+            ),
+            "E1234567890ABCDEFGHIJKL": (
+                StandardLogDeliveryRecord(
+                    delivery_id="delivery-2",
+                    delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-2",
+                    delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-2",
+                    delivery_destination_type="CWL",
+                    delivery_source_name="CreatedByCloudFront-E1234567890ABCDEFGHIJKL-ACCESS_LOGS",
+                ),
+                StandardLogDeliveryRecord(
+                    delivery_id="delivery-3",
+                    delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-3",
+                    delivery_destination_arn="arn:aws:s3:::cloudfront-logs",
+                    delivery_destination_type="S3",
+                    delivery_source_name="CreatedByCloudFront-E1234567890ABCDEFGHIJKL-ACCESS_LOGS",
+                ),
+            ),
         },
     )
 
@@ -175,13 +202,13 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert cell_plain(table.get_row_at(0)[8]) == "1.23K"
         assert cell_plain(table.get_row_at(1)[2]) == "PAYG"
         assert cell_plain(table.get_row_at(1)[4]) == "○"
-        assert cell_plain(table.get_row_at(1)[5]) == "-"
+        assert cell_plain(table.get_row_at(1)[5]) == "CWL"
         assert cell_plain(table.get_row_at(1)[6]) == "99.89 GB"
         assert cell_plain(table.get_row_at(1)[7]) == "-"
         assert cell_plain(table.get_row_at(1)[8]) == "99.89K"
         assert cell_plain(table.get_row_at(2)[2]) == "PAYG"
         assert cell_plain(table.get_row_at(2)[4]) == "●"
-        assert cell_plain(table.get_row_at(2)[5]) == "-"
+        assert cell_plain(table.get_row_at(2)[5]) == "MIX"
         assert cell_plain(table.get_row_at(2)[6]) == "998.90 GB"
         assert cell_plain(table.get_row_at(2)[7]) == "-"
         assert cell_plain(table.get_row_at(2)[8]) == "1.23M"
@@ -222,6 +249,19 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.screen.query_one("#distribution-detail-upload", Static).content == "-"
         assert app.screen.query_one("#distribution-detail-requests", Static).content == "99,890"
         assert app.screen.query_one("#distribution-detail-month", Static).content == "2026-05"
+        assert app.screen.query_one("#distribution-detail-logging-enabled", Static).content == "CWL"
+        assert app.screen.query_one("#distribution-detail-logging-delivery-ids", Static).content == (
+            "delivery-1"
+        )
+        assert app.screen.query_one("#distribution-detail-logging-destination-types", Static).content == (
+            "CWL"
+        )
+        assert app.screen.query_one("#distribution-detail-logging-destination-arns", Static).content == (
+            "arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1"
+        )
+        assert app.screen.query_one("#distribution-detail-logging-source-names", Static).content == (
+            "CreatedByCloudFront-E4567890-ACCESS_LOGS"
+        )
         assert app.screen.query_one("#distribution-detail-cancel", Button)
         assert app.screen.query_one("#distribution-detail-save", Button)
 

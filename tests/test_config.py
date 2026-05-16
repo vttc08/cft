@@ -16,6 +16,7 @@ from cft.models.cache import (
     ProfileCacheState,
     ProfileSummaryCache,
     SourceMetrics,
+    StandardLogDeliveryRecord,
 )
 
 
@@ -162,6 +163,15 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
                 ),
                 s3=SourceMetrics(download=10, upload=11, requests=12),
                 cwl=SourceMetrics(download=13, upload=14, requests=15),
+                standard_logs=(
+                    StandardLogDeliveryRecord(
+                        delivery_id="delivery-1",
+                        delivery_arn="arn:aws:logs:us-east-1:123456789012:delivery/delivery-1",
+                        delivery_destination_arn="arn:aws:logs:us-east-1:123456789012:delivery-destination/dest-1",
+                        delivery_destination_type="CWL",
+                        delivery_source_name="CreatedByCloudFront-E123-ACCESS_LOGS",
+                    ),
+                ),
             )
         },
     )
@@ -181,6 +191,7 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     assert round_tripped.distributions["E123"].cw.month_key == "2026-05"
     assert round_tripped.distributions["E123"].s3.download == 10
     assert round_tripped.distributions["E123"].cwl.requests == 15
+    assert round_tripped.distributions["E123"].standard_logs[0].delivery_destination_type == "CWL"
 
 
 def test_distribution_cache_record_defaults_plan_type_to_payg() -> None:

@@ -45,6 +45,19 @@ def normalize_distribution_type(value: object | None) -> str:
     return "PAYG"
 
 
+def normalize_delivery_destination_type(value: object | None) -> str | None:
+    text = _string_or_none(value)
+    if text is None:
+        return None
+
+    normalized = text.casefold().replace("-", "_").replace(" ", "_")
+    if normalized in {"cwl", "cloudwatch_logs", "cloudwatchlog"}:
+        return "CWL"
+    if normalized in {"s3", "amazon_s3"}:
+        return "S3"
+    return text.upper()
+
+
 def _compact_mapping(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
 
@@ -73,6 +86,58 @@ def _mapping_of_mapping_strings(payload: object) -> dict[str, dict[str, str]]:
         if normalized:
             result[key_text] = normalized
     return result
+
+
+def _standard_log_delivery_records(payload: object) -> tuple[StandardLogDeliveryRecord, ...]:
+    if not isinstance(payload, list):
+        return ()
+    return tuple(
+        delivery
+        for delivery in (StandardLogDeliveryRecord.from_payload(item) for item in payload)
+        if delivery.delivery_id
+    )
+
+
+@dataclass(frozen=True)
+class StandardLogDeliveryRecord:
+    delivery_id: str
+    delivery_arn: str | None = None
+    delivery_destination_arn: str | None = None
+    delivery_destination_type: str | None = None
+    delivery_source_name: str | None = None
+    last_updated: datetime | None = None
+
+    @classmethod
+    def from_payload(cls, payload: object) -> StandardLogDeliveryRecord:
+        if not isinstance(payload, dict):
+            return cls(delivery_id="")
+
+        return cls(
+            delivery_id=_string_or_none(payload.get("delivery_id") or payload.get("id")) or "",
+            delivery_arn=_string_or_none(payload.get("delivery_arn") or payload.get("arn")),
+            delivery_destination_arn=_string_or_none(
+                payload.get("delivery_destination_arn") or payload.get("deliveryDestinationArn")
+            ),
+            delivery_destination_type=normalize_delivery_destination_type(
+                payload.get("delivery_destination_type") or payload.get("deliveryDestinationType")
+            ),
+            delivery_source_name=_string_or_none(
+                payload.get("delivery_source_name") or payload.get("deliverySourceName")
+            ),
+            last_updated=parse_utc_datetime(payload.get("last_updated")),
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        payload = {
+            "delivery_id": self.delivery_id,
+            "delivery_arn": self.delivery_arn,
+            "delivery_destination_arn": self.delivery_destination_arn,
+            "delivery_destination_type": self.delivery_destination_type,
+            "delivery_source_name": self.delivery_source_name,
+        }
+        if self.last_updated is not None:
+            payload["last_updated"] = format_utc_datetime(self.last_updated)
+        return _compact_mapping(payload)
 
 
 @dataclass(frozen=True)
@@ -194,6 +259,7 @@ class DistributionCacheRecord:
     cw: SourceMetrics = field(default_factory=SourceMetrics)
     s3: SourceMetrics = field(default_factory=SourceMetrics)
     cwl: SourceMetrics = field(default_factory=SourceMetrics)
+    standard_logs: tuple[StandardLogDeliveryRecord, ...] = field(default_factory=tuple)
     last_updated: datetime | None = None
 
     @classmethod
@@ -207,7 +273,16 @@ class DistributionCacheRecord:
                 key: value
                 for key, value in payload.items()
                 if key
-                not in {"distribution_id", "type", "inventory", "cw", "s3", "cwl", "last_updated"}
+                not in {
+                    "distribution_id",
+                    "type",
+                    "inventory",
+                    "cw",
+                    "s3",
+                    "cwl",
+                    "standard_logs",
+                    "last_updated",
+                }
             }
 
         return cls(
@@ -217,6 +292,7 @@ class DistributionCacheRecord:
             cw=SourceMetrics.from_payload(payload.get("cw")),
             s3=SourceMetrics.from_payload(payload.get("s3")),
             cwl=SourceMetrics.from_payload(payload.get("cwl")),
+            standard_logs=_standard_log_delivery_records(payload.get("standard_logs")),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
         )
 
@@ -228,10 +304,11 @@ class DistributionCacheRecord:
             "cw": self.cw.to_payload(),
             "s3": self.s3.to_payload(),
             "cwl": self.cwl.to_payload(),
+            "standard_logs": [delivery.to_payload() for delivery in self.standard_logs] or None,
         }
         if self.last_updated is not None:
             payload["last_updated"] = format_utc_datetime(self.last_updated)
-        return payload
+        return _compact_mapping(payload)
 
     def merged_inventory(
         self,
@@ -239,6 +316,7 @@ class DistributionCacheRecord:
         *,
         last_updated: datetime | None,
         distribution_type: str | None = None,
+        standard_logs: tuple[StandardLogDeliveryRecord, ...] | None = None,
     ) -> DistributionCacheRecord:
         return replace(
             self,
@@ -247,6 +325,7 @@ class DistributionCacheRecord:
             type=normalize_distribution_type(distribution_type)
             if distribution_type is not None
             else normalize_distribution_type(self.type),
+            standard_logs=standard_logs if standard_logs is not None else self.standard_logs,
         )
 
 
@@ -316,6 +395,7 @@ class ProfileCacheState:
         identity: dict[str, str] | None,
         inventory: dict[str, dict[str, Any]],
         last_updated: datetime,
+        standard_log_deliveries: dict[str, tuple[StandardLogDeliveryRecord, ...]] | None = None,
     ) -> ProfileCacheState:
         merged_distributions: dict[str, DistributionCacheRecord] = {}
         for distribution_id, record in sorted(inventory.items()):
@@ -325,6 +405,11 @@ class ProfileCacheState:
             merged_distributions[distribution_id] = existing.merged_inventory(
                 record,
                 last_updated=last_updated,
+                standard_logs=(
+                    standard_log_deliveries.get(distribution_id, ())
+                    if standard_log_deliveries is not None
+                    else None
+                ),
             )
 
         return replace(
