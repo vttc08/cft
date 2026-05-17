@@ -18,7 +18,6 @@ HeaderClock {
 Footer {
     background: $surface;
     color: $text-muted;
-    border-top: solid #3a4047;
 }
 
 #footer-hints {
@@ -33,7 +32,7 @@ Footer {
 
 #page {
     width: 100%;
-    height: 100%;
+    height: 1fr;
     padding: 1 1;
     background: $background;
 }

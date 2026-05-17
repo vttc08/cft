@@ -19,6 +19,7 @@ from textual.widgets import (
     Button,
     DataTable,
     Digits,
+    Footer,
     Header,
     Link,
     ProgressBar,
@@ -659,12 +660,12 @@ class CftApp(App[None]):
     SUB_TITLE = "CloudFront distribution browser"
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
-        ("r", "refresh", "Refresh"),
+        Binding("r", "refresh", "Refresh"),
         Binding("ctrl+p", "setup_configuration", "Open configuration", key_display="ctrl+p"),
-        ("b", "setup_configuration", "Configuration"),
-        ("q", "quit", "Quit"),
-        ("ctrl+q", "quit", "Quit"),
-        ("ctrl+c", "quit", "Quit"),
+        Binding("b", "setup_configuration", "Configuration"),
+        Binding("q", "quit", "Quit"),
+        Binding("ctrl+q", "quit", "Quit"),
+        Binding("ctrl+c", "quit", "Quit"),
     ]
     CSS_PATH = Path(__file__).with_name("cft.tcss")
 
@@ -758,10 +759,7 @@ class CftApp(App[None]):
                         zebra_stripes=True,
                         cell_padding=0,
                     )
-        yield Static(
-            "Ctrl+P Open configuration  ·  R Refresh  ·  Q Quit",
-            id="footer-hints",
-        )
+        yield Footer()
 
     @work(exclusive=True)
     async def on_mount(self) -> None:

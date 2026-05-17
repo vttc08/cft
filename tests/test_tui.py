@@ -14,7 +14,7 @@ from cft.tui.screens.config_menu import ConfigurationMenuScreen
 from cft.tui.screens.cwl_logs_setup import CwlLogGroupSetupScreen
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
-from textual.widgets import Button, Digits, Input, Link, ListView, ProgressBar, Select, Static
+from textual.widgets import Button, Digits, Footer, Input, Link, ListView, ProgressBar, Select, Static
 
 
 def cell_text(value: object) -> str:
@@ -259,8 +259,14 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert table.ordered_columns[7].width >= 9
         assert table.ordered_columns[8].width >= 5
         assert 5 <= table.ordered_columns[0].width <= 15
-        footer_hints = app.query_one("#footer-hints", Static)
-        assert footer_hints.content == "Ctrl+P Open configuration  ·  R Refresh  ·  Q Quit"
+        footer = app.query_one(Footer)
+        assert footer is not None
+        assert footer.region.height == 1
+        assert footer.content_size.height == 1
+        assert list(footer.children)
+        assert all(child.region.y == footer.region.y for child in footer.children)
+        # Verify key bindings are defined
+        assert any(b.key == "ctrl+p" for b in app.BINDINGS)
 
         table.focus()
         await pilot.press("down")
