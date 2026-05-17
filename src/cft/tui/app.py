@@ -1455,4 +1455,46 @@ class CftApp(App[None]):
         return self._log_group_service.list_log_groups()
 
 def run_tui(profile_name: str | None = None, *, watch_css: bool = False) -> None:
+    # If no AWS configuration or credentials are present, show a helpful message and exit
+    import os
+    from pathlib import Path
+
+    aws_env_keys = (
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+        "AWS_SESSION_TOKEN",
+        "AWS_PROFILE",
+        "AWS_ROLE_ARN",
+        "AWS_SSO_ACCESS_TOKEN",
+    )
+
+    env_has = any(os.environ.get(k) for k in aws_env_keys)
+    env_has = env_has or bool(os.environ.get("AWS_SHARED_CREDENTIALS_FILE")) or bool(os.environ.get("AWS_CONFIG_FILE"))
+
+    home = Path.home()
+    credentials_file = home.joinpath(".aws", "credentials")
+    config_file = home.joinpath(".aws", "config")
+
+    shared_creds = os.environ.get("AWS_SHARED_CREDENTIALS_FILE")
+    shared_config = os.environ.get("AWS_CONFIG_FILE")
+
+    files_exist = any(
+        p.exists()
+        for p in (
+            credentials_file,
+            config_file,
+            Path(shared_creds) if shared_creds else Path(),
+            Path(shared_config) if shared_config else Path(),
+        )
+    )
+
+    if not env_has and not files_exist:
+        # Keep output minimal and clear for TUI users running from terminal
+        print(
+            "No AWS credentials or config found in ~/.aws and no AWS environment variables set.\n"
+            "Please run 'aws configure' or set AWS_PROFILE/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.\n"
+            "Exiting."
+        )
+        return
+
     CftApp(profile_name=profile_name, watch_css=watch_css).run()
