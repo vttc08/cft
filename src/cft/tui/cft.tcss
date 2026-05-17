@@ -85,8 +85,7 @@ Footer {
 #summary-intro,
 #summary-trends,
 #summary-budget,
-#summary-cur-export,
-#summary-cwl-logs {
+#summary-configuration {
     height: auto;
     background: $panel;
     border: solid #3a4047;
@@ -98,13 +97,9 @@ Footer {
     margin-right: 1;
 }
 
-#summary-cur-export {
-    width: 2fr;
-    margin-right: 1;
-}
-
-#summary-cwl-logs {
+#summary-configuration {
     width: 1fr;
+    margin-bottom: 0;
 }
 
 #summary-metrics {
@@ -191,15 +186,6 @@ Footer {
     margin-bottom: 0;
 }
 
-#summary-cwl-logs-log-group {
-    color: $primary;
-}
-
-#summary-cwl-logs-detail {
-    color: $text-muted;
-    margin-bottom: 0;
-}
-
 .link-button {
     width: auto;
     height: auto;
@@ -228,6 +214,71 @@ Footer {
 
 #summary-budget-bar {
     margin-top: 1;
+}
+
+#configuration-menu-modal {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    background: #00000066;
+}
+
+#configuration-menu-dialog {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+}
+
+#configuration-menu-title {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#configuration-menu-subtitle {
+    color: $text-muted;
+    height: auto;
+    margin-bottom: 1;
+}
+
+.configuration-menu-card {
+    width: 100%;
+    height: auto;
+    background: $panel;
+    border: solid #3a4047;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+.configuration-menu-card-title {
+    color: $text-muted;
+    text-style: bold;
+    height: auto;
+    margin-bottom: 0;
+}
+
+.configuration-menu-card-detail {
+    color: $foreground;
+    height: auto;
+    margin-bottom: 0;
+}
+
+.configuration-menu-actions {
+    width: 100%;
+    height: auto;
+    margin-top: 1;
+}
+
+.configuration-menu-actions Button,
+#configuration-menu-footer Button {
+    margin-right: 1;
+}
+
+#configuration-menu-footer {
+    width: 100%;
+    height: auto;
+    margin-top: 0;
 }
 
 /* Metric progress bars (download/upload/requests) */
@@ -312,6 +363,13 @@ ProgressBar#summary-requests-card-bar > Bar {
 }
 
 #cur-export-modal {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    background: #00000066;
+}
+
+#cwl-log-group-modal {
     align: center middle;
     width: 100%;
     height: 100%;

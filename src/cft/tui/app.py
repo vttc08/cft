@@ -28,6 +28,7 @@ from textual.widgets._progress_bar import Bar
 
 from cft.aws.cloudwatch import CloudFrontUsageService
 from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
+from cft.aws.cloudfront_s3_logs import CloudFrontS3LogsUploadService
 from cft.aws.cloudwatch_logs import (
     CloudFrontLogsUploadService,
     CloudWatchLogGroupDiscoveryService,
@@ -36,7 +37,6 @@ from cft.aws.cloudwatch_logs import (
 from cft.aws.s3 import S3BucketDiscoveryService
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import (
-    display_cwl_log_group,
     display_data_export_prefix,
     load_app_settings,
     save_cwl_log_group_settings,
@@ -52,6 +52,7 @@ from cft.tui.screens.cwl_logs_setup import (
     CwlLogGroupSetupScreen,
     CwlLogGroupStatus,
 )
+from cft.tui.screens.config_menu import ConfigurationMenuScreen
 from cft.tui.screens.cur_export_setup import (
     CurExportSetupResult,
     CurExportSetupScreen,
@@ -102,18 +103,11 @@ class SummaryPreviewData:
     last_updated: datetime | None = None
 
 
-class SetupDataExportLink(Link):
+class SetupConfigurationLink(Link):
     def action_open_link(self) -> None:
         app = self.app
         if isinstance(app, CftApp):
-            app.action_setup_cur_export()
-
-
-class SetupCwlLogsLink(Link):
-    def action_open_link(self) -> None:
-        app = self.app
-        if isinstance(app, CftApp):
-            app.action_setup_cwl_logs()
+            app.action_setup_configuration()
 
 
 MOCK_SUMMARY_DATA = SummaryPreviewData(
@@ -133,14 +127,12 @@ class SummaryWidgetShowcase(Vertical):
         data: SummaryPreviewData = MOCK_SUMMARY_DATA,
         account_id: str | None = None,
         cur_export_status: CurExportStatus | None = None,
-        cwl_log_group_status: CwlLogGroupStatus | None = None,
     ) -> None:
         super().__init__(id="summary-showcase")
         self.profile_name = profile_name
         self.data = data
         self.account_id = account_id or data.account_id
         self.cur_export_status = cur_export_status or CurExportStatus()
-        self.cwl_log_group_status = cwl_log_group_status or CwlLogGroupStatus()
         self.now_value: datetime | None = None
         self.last_updated_value: datetime | None = data.last_updated
 
@@ -150,22 +142,13 @@ class SummaryWidgetShowcase(Vertical):
                 yield Static("", classes="summary-note", id="summary-note")
                 yield Static("", classes="summary-detail", id="summary-now")
                 yield Static("", classes="summary-detail", id="summary-last-updated")
-            with Vertical(id="summary-cur-export", classes="summary-panel"):
-                yield Static("CUR Export", classes="summary-panel-title", id="summary-cur-export-title")
-                yield Static("", classes="summary-note", id="summary-cur-export-bucket")
-                yield Static("", classes="summary-detail", id="summary-cur-export-detail")
-                yield SetupDataExportLink(
-                    "Setup Data Export",
-                    id="summary-cur-export-action",
-                    classes="link-button",
-                )
-            with Vertical(id="summary-cwl-logs", classes="summary-panel"):
-                yield Static("CWL Logs", classes="summary-panel-title", id="summary-cwl-logs-title")
-                yield Static("", classes="summary-note", id="summary-cwl-logs-log-group")
-                yield Static("", classes="summary-detail", id="summary-cwl-logs-detail")
-                yield SetupCwlLogsLink(
-                    "Setup CWL Logs",
-                    id="summary-cwl-logs-action",
+            with Vertical(id="summary-configuration", classes="summary-panel"):
+                yield Static("CUR Export", classes="summary-panel-title", id="summary-configuration-title")
+                yield Static("", classes="summary-note", id="summary-configuration-summary")
+                yield Static("", classes="summary-detail", id="summary-configuration-detail")
+                yield SetupConfigurationLink(
+                    "Edit Configuration",
+                    id="summary-configuration-action",
                     classes="link-button",
                 )
 
@@ -233,10 +216,6 @@ class SummaryWidgetShowcase(Vertical):
         self.cur_export_status = status
         self._refresh_summary_layout()
 
-    def set_cwl_log_group_status(self, status: CwlLogGroupStatus) -> None:
-        self.cwl_log_group_status = status
-        self._refresh_summary_layout()
-
     def set_last_updated(self, last_updated: datetime | None) -> None:
         self.last_updated_value = last_updated
         self._refresh_summary_layout()
@@ -270,7 +249,7 @@ class SummaryWidgetShowcase(Vertical):
 
     def _refresh_summary_layout(self) -> None:
         intro_width = self._panel_content_width("#summary-intro")
-        export_width = self._panel_content_width("#summary-cur-export")
+        export_width = self._panel_content_width("#summary-configuration")
 
         self.query_one("#summary-note", Static).update(
             self._format_profile_account_line(intro_width)
@@ -282,24 +261,14 @@ class SummaryWidgetShowcase(Vertical):
             self._format_timestamp_line("Updated", self.last_updated_value, intro_width)
         )
 
-        self.query_one("#summary-cur-export-bucket", Static).update(
-            self._format_cur_export_bucket(export_width)
+        self.query_one("#summary-configuration-summary", Static).update(
+            self._format_configuration_summary(export_width)
         )
-        self.query_one("#summary-cur-export-detail", Static).update(
-            self._format_cur_export_detail(export_width)
+        self.query_one("#summary-configuration-detail", Static).update(
+            self._format_configuration_detail(export_width)
         )
-        self.query_one("#summary-cur-export-action", SetupDataExportLink).update(
-            "Edit Data Export" if self.cur_export_status.is_configured else "Setup Data Export"
-        )
-
-        self.query_one("#summary-cwl-logs-log-group", Static).update(
-            self._format_cwl_log_group_name(export_width)
-        )
-        self.query_one("#summary-cwl-logs-detail", Static).update(
-            self._format_cwl_log_group_detail(export_width)
-        )
-        self.query_one("#summary-cwl-logs-action", SetupCwlLogsLink).update(
-            "Edit CWL Logs" if self.cwl_log_group_status.is_configured else "Setup CWL Logs"
+        self.query_one("#summary-configuration-action", SetupConfigurationLink).update(
+            "Edit Configuration"
         )
 
     def _panel_content_width(self, widget_id: str) -> int:
@@ -333,44 +302,20 @@ class SummaryWidgetShowcase(Vertical):
                 return candidate
         return CftApp._truncate(candidates[-1], width)
 
-    def _format_cur_export_bucket(self, width: int) -> str:
-        bucket = self.cur_export_status.bucket if self.cur_export_status.is_configured else "Not configured"
-        return bucket if len(bucket) <= width else CftApp._truncate(bucket, width)
-
-    def _format_cur_export_detail(self, width: int) -> str:
+    def _format_configuration_summary(self, width: int) -> str:
         if not self.cur_export_status.is_configured:
-            detail = "Path: / · Export: -"
+            summary = "Not configured"
+            return summary if len(summary) <= width else CftApp._truncate(summary, width)
+
+        summary = self.cur_export_status.bucket or "Configured"
+        return summary if len(summary) <= width else CftApp._truncate(summary, width)
+
+    def _format_configuration_detail(self, width: int) -> str:
+        if not self.cur_export_status.is_configured:
+            detail = "Set up the data export link"
             return detail if len(detail) <= width else CftApp._truncate(detail, width)
 
-        full = (
-            f"Path: {display_data_export_prefix(self.cur_export_status.prefix)}"
-            f" · Export: {self.cur_export_status.export_name or '-'}"
-        )
-        if len(full) <= width:
-            return full
-
-        compact = " · ".join(
-            [
-                display_data_export_prefix(self.cur_export_status.prefix),
-                self.cur_export_status.export_name or "-",
-            ]
-        )
-        return compact if len(compact) <= width else CftApp._truncate(compact, width)
-
-    def _format_cwl_log_group_name(self, width: int) -> str:
-        log_group = (
-            display_cwl_log_group(self.cwl_log_group_status.log_group)
-            if self.cwl_log_group_status.is_configured
-            else "Not configured"
-        )
-        return log_group if len(log_group) <= width else CftApp._truncate(log_group, width)
-
-    def _format_cwl_log_group_detail(self, width: int) -> str:
-        if not self.cwl_log_group_status.is_configured:
-            detail = "Override: -"
-            return detail if len(detail) <= width else CftApp._truncate(detail, width)
-
-        detail = f"Override: {display_cwl_log_group(self.cwl_log_group_status.log_group)}"
+        detail = display_data_export_prefix(self.cur_export_status.prefix)
         return detail if len(detail) <= width else CftApp._truncate(detail, width)
 
     @staticmethod
@@ -714,8 +659,7 @@ class CftApp(App[None]):
     SUB_TITLE = "CloudFront distribution browser"
     BINDINGS = [
         ("r", "refresh", "Refresh"),
-        ("b", "setup_cur_export", "CUR Export"),
-        ("l", "setup_cwl_logs", "CWL Logs"),
+        ("b", "setup_configuration", "Configuration"),
         ("q", "quit", "Quit"),
         ("ctrl+q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
@@ -750,6 +694,10 @@ class CftApp(App[None]):
             paths=self.paths,
         )
         self._usage_service = CloudFrontUsageService(
+            profile_name=profile_name,
+            paths=self.paths,
+        )
+        self._s3_logs_upload_service = CloudFrontS3LogsUploadService(
             profile_name=profile_name,
             paths=self.paths,
         )
@@ -799,7 +747,6 @@ class CftApp(App[None]):
                 yield SummaryWidgetShowcase(
                     profile_name=self.settings_profile_name,
                     cur_export_status=self._cur_export_status(),
-                    cwl_log_group_status=self._cwl_log_group_status(),
                 )
                 with Vertical(id="table-shell"):
                     yield DistributionUsagePreview()
@@ -819,18 +766,18 @@ class CftApp(App[None]):
     async def action_refresh(self) -> None:
         await self._load_data(refresh=True)
 
+    def action_setup_configuration(self) -> None:
+        self._open_configuration_menu()
+
     def action_setup_cur_export(self) -> None:
-        self._open_cur_export_setup()
+        self._open_configuration_menu()
 
     def action_setup_cwl_logs(self) -> None:
         self._open_cwl_log_group_setup()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
-        if event.button.id == "summary-cur-export-action":
-            self._open_cur_export_setup()
-            event.stop()
-        if event.button.id == "summary-cwl-logs-action":
-            self._open_cwl_log_group_setup()
+        if event.button.id == "summary-configuration-action":
+            self._open_configuration_menu()
             event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -924,9 +871,13 @@ class CftApp(App[None]):
     ) -> dict[str, SourceMetrics]:
         if self._usage_loader_is_default:
             snapshot = self._usage_service.load(inventory, refresh=refresh)
+            s3_upload_snapshot = self._s3_logs_upload_service.load(inventory, refresh=refresh)
             upload_snapshot = self._logs_upload_service.load(inventory, refresh=refresh)
             return self._merge_usage_snapshots(
-                snapshot.usage_by_distribution,
+                self._merge_usage_snapshots(
+                    snapshot.usage_by_distribution,
+                    s3_upload_snapshot.upload_by_distribution,
+                ),
                 upload_snapshot.upload_by_distribution,
             )
         return self.usage_loader(inventory)
@@ -970,7 +921,6 @@ class CftApp(App[None]):
             now=self.now(),
         )
         summary.set_cur_export_status(self._cur_export_status())
-        summary.set_cwl_log_group_status(self._cwl_log_group_status())
         summary.set_last_updated(self.billing_snapshot.data_end or self.billing_snapshot.last_updated)
 
     def _cur_export_status(self) -> CurExportStatus:
@@ -979,6 +929,22 @@ class CftApp(App[None]):
             prefix=self.settings.data_export.prefix,
             export_name=self.settings.data_export.export_name,
         )
+
+    def _open_configuration_menu(self) -> None:
+        self.push_screen(
+            ConfigurationMenuScreen(
+                profile_name=self.settings_profile_name,
+                cur_export_status=self._cur_export_status(),
+                cwl_log_group_status=self._cwl_log_group_status(),
+            ),
+            self._handle_configuration_menu_result,
+        )
+
+    def _handle_configuration_menu_result(self, result: str | None) -> None:
+        if result == "cur_export":
+            self._open_cur_export_setup()
+        elif result == "cwl_logs":
+            self._open_cwl_log_group_setup()
 
     def _cwl_log_group_status(self) -> CwlLogGroupStatus:
         return CwlLogGroupStatus(log_group=self.settings.aws.cwl_log_group)
@@ -1094,6 +1060,7 @@ class CftApp(App[None]):
                 upload=upload.upload if upload.upload is not None else existing.upload,
                 last_updated=upload.last_updated or existing.last_updated,
                 month_key=upload.month_key or existing.month_key,
+                source_key=upload.source_key or existing.source_key,
             )
         return merged
 

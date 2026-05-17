@@ -10,6 +10,7 @@ from cft.data_exports import BillingSnapshot
 from cft.models.cache import SourceMetrics, StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
+from cft.tui.screens.config_menu import ConfigurationMenuScreen
 from cft.tui.screens.cwl_logs_setup import CwlLogGroupSetupScreen
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
@@ -191,19 +192,18 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
             "09:30:00",
         }
         assert app.query_one("#summary-last-updated").content == "Updated: -"
-        cur_export_link = app.query_one("#summary-cur-export-action", Link)
-        assert app.query_one("#summary-cur-export-title").content == "CUR Export"
-        assert app.query_one("#summary-cur-export-bucket").content == "Not configured"
-        assert app.query_one("#summary-cur-export-detail").content in {
-            "Path: / · Export: -",
-            "/ · -",
+        assert app.query_one("#summary-configuration-title").content == "CUR Export"
+        assert app.query_one("#summary-configuration-summary").content in {
+            "Not configured",
+            "Configured",
+            "billing-bucket",
         }
-        assert cur_export_link.content == "Setup Data Export"
-        cwl_link = app.query_one("#summary-cwl-logs-action", Link)
-        assert app.query_one("#summary-cwl-logs-title").content == "CWL Logs"
-        assert app.query_one("#summary-cwl-logs-log-group").content == "Not configured"
-        assert app.query_one("#summary-cwl-logs-detail").content == "Override: -"
-        assert cwl_link.content == "Setup CWL Logs"
+        assert app.query_one("#summary-configuration-detail").content in {
+            "Set up the data export link",
+            "Set up the data export l..",
+            "/",
+        }
+        assert app.query_one("#summary-configuration-action", Link).content == "Edit Configuration"
         assert app.query_one("#summary-download-value").content == "-"
         assert app.query_one("#summary-upload-value").content == "-"
         assert app.query_one("#summary-requests-value").content == "-"
@@ -378,16 +378,20 @@ async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_pa
         )
 
 
-def test_tui_merges_cloudwatch_and_cwl_upload_usage() -> None:
+def test_tui_merges_cloudwatch_s3_and_cwl_upload_usage() -> None:
     merged = CftApp._merge_usage_snapshots(
-        {"E123": SourceMetrics(download=123, requests=456, month_key="2026-05")},
-        {"E123": SourceMetrics(upload=789, month_key="2026-05")},
+        CftApp._merge_usage_snapshots(
+            {"E123": SourceMetrics(download=123, requests=456, month_key="2026-05")},
+            {"E123": SourceMetrics(upload=789, month_key="2026-05", source_key="s3:bucket")},
+        ),
+        {"E123": SourceMetrics(upload=456, month_key="2026-05", source_key="manual:log-group")},
     )
 
     assert merged["E123"].download == 123
     assert merged["E123"].requests == 456
-    assert merged["E123"].upload == 789
+    assert merged["E123"].upload == 456
     assert merged["E123"].month_key == "2026-05"
+    assert merged["E123"].source_key == "manual:log-group"
 
 
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
@@ -491,7 +495,7 @@ async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
         await wait_for_dashboard_ready(app, pilot)
 
         assert app.theme == CFT_AWS_THEME.name
-        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "l", "q", "ctrl+q", "ctrl+c"}
+        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -549,7 +553,10 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -
 
         assert app.query_one("#dashboard-scroll")
         assert app.query_one("#summary-showcase")
-        assert app.query_one("#summary-note").content == "dev · 123456789012"
+        assert app.query_one("#summary-note").content in {
+            "Profile dev · Account 123456789012",
+            "dev · 123456789012",
+        }
         assert app.query_one("#summary-now").content in {
             "Now: 2026-05-11 09:30:00",
             "09:30:00",
@@ -755,14 +762,10 @@ export_name = "cloudfront-cur"
         await pilot.pause()
         await wait_for_dashboard_ready(app, pilot)
 
-        cur_export_link = app.query_one("#summary-cur-export-action", Link)
-        assert app.query_one("#summary-cur-export-title").content == "CUR Export"
-        assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
-        assert app.query_one("#summary-cur-export-detail").content in {
-            "Path: /exports · Export: cloudfront-cur",
-            "/exports · cloudfront-cur",
-        }
-        assert cur_export_link.content == "Edit Data Export"
+        assert app.query_one("#summary-configuration-title").content == "CUR Export"
+        assert app.query_one("#summary-configuration-summary").content == "billing-bucket"
+        assert app.query_one("#summary-configuration-detail").content == "/exports"
+        assert app.query_one("#summary-configuration-action", Link).content == "Edit Configuration"
         assert app.query_one("#summary-last-updated").content == "Updated: 2026-05-11 08:00:00"
         assert app.query_one("#summary-download-value").content == "128.4 GB"
         assert app.query_one("#summary-upload-value").content == "6.8 GB"
@@ -789,9 +792,18 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
         await pilot.pause()
         await wait_for_dashboard_ready(app, pilot)
 
-        summary_button = app.query_one("#summary-cur-export-action", Link)
+        summary_button = app.query_one("#summary-configuration-action", Link)
         summary_button.focus()
         await pilot.press("b")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfigurationMenuScreen)
+        assert app.screen.query_one("#configuration-menu-title").content == (
+            "Edit Configuration for profile dev"
+        )
+        assert app.screen.query_one("#configuration-menu-edit-cur-export", Button)
+        assert app.screen.query_one("#configuration-menu-edit-cwl", Button)
+        await pilot.click("#configuration-menu-edit-cur-export")
         await pilot.pause()
 
         assert isinstance(app.screen, CurExportSetupScreen)
@@ -820,13 +832,11 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
         assert 'bucket = "billing-bucket"' in profile_text
         assert 'prefix = "exports/root"' in profile_text
         assert 'export_name = "cloudfront-cur"' in profile_text
-        cur_export_link = app.query_one("#summary-cur-export-action", Link)
-        assert app.query_one("#summary-cur-export-bucket").content == "billing-bucket"
-        assert app.query_one("#summary-cur-export-detail").content in {
-            "Path: /exports/root · Export: cloudfront-cur",
-            "/exports/root · cloudfront-cur",
-        }
-        assert cur_export_link.content == "Edit Data Export"
+        cur_export_link = app.query_one("#summary-configuration-action", Link)
+        assert app.query_one("#summary-configuration-title").content == "CUR Export"
+        assert app.query_one("#summary-configuration-summary").content == "billing-bucket"
+        assert app.query_one("#summary-configuration-detail").content == "/exports/root"
+        assert cur_export_link.content == "Edit Configuration"
 
 
 def test_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> None:
@@ -848,9 +858,13 @@ async def _assert_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> N
         await pilot.pause()
         await wait_for_dashboard_ready(app, pilot)
 
-        summary_button = app.query_one("#summary-cwl-logs-action", Link)
+        summary_button = app.query_one("#summary-configuration-action", Link)
         summary_button.focus()
-        await pilot.press("l")
+        await pilot.press("b")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfigurationMenuScreen)
+        await pilot.click("#configuration-menu-edit-cwl")
         await pilot.pause()
 
         assert isinstance(app.screen, CwlLogGroupSetupScreen)
@@ -870,10 +884,14 @@ async def _assert_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> N
             'cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"'
             in profile_text
         )
-        cwl_log_group_link = app.query_one("#summary-cwl-logs-action", Link)
-        assert app.query_one("#summary-cwl-logs-log-group").content == "cloudfrontlogs"
-        assert app.query_one("#summary-cwl-logs-detail").content == "Override: cloudfrontlogs"
-        assert cwl_log_group_link.content == "Edit CWL Logs"
+        cwl_log_group_link = app.query_one("#summary-configuration-action", Link)
+        assert app.query_one("#summary-configuration-title").content == "CUR Export"
+        assert app.query_one("#summary-configuration-summary").content == "Not configured"
+        assert app.query_one("#summary-configuration-detail").content in {
+            "Set up the data export link",
+            "Set up the data export l..",
+        }
+        assert cwl_log_group_link.content == "Edit Configuration"
 
 
 def test_summary_widget_truncation_stages_are_consistent() -> None:
@@ -901,9 +919,9 @@ def test_summary_widget_truncation_stages_are_consistent() -> None:
         prefix="exports",
         export_name="cloudfront-cur",
     )
-    assert widget._format_cur_export_bucket(80) == "billing-bucket"
-    assert widget._format_cur_export_detail(80) == "Path: /exports · Export: cloudfront-cur"
-    assert widget._format_cur_export_detail(25) == "/exports · cloudfront-cur"
+    assert widget._format_configuration_summary(80) == "billing-bucket"
+    assert widget._format_configuration_detail(80) == "/exports"
+    assert widget._format_configuration_detail(25).startswith("/exports")
 
 
 def test_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path) -> None:
@@ -925,6 +943,10 @@ async def _assert_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path) ->
         await wait_for_dashboard_ready(app, pilot)
 
         await pilot.press("b")
+        await pilot.pause()
+
+        assert isinstance(app.screen, ConfigurationMenuScreen)
+        await pilot.click("#configuration-menu-edit-cur-export")
         await pilot.pause()
 
         assert app.screen.query_one("#cur-export-error").content == "Bucket discovery failed: AccessDenied"
