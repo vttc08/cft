@@ -12,13 +12,13 @@ from textual import events
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.color import Gradient
+from textual.binding import Binding
 from textual.theme import Theme
 from textual import work
 from textual.widgets import (
     Button,
     DataTable,
     Digits,
-    Footer,
     Header,
     Link,
     ProgressBar,
@@ -657,8 +657,10 @@ class CftApp(App[None]):
 
     TITLE = "cft"
     SUB_TITLE = "CloudFront distribution browser"
+    ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         ("r", "refresh", "Refresh"),
+        Binding("ctrl+p", "setup_configuration", "Open configuration", key_display="ctrl+p"),
         ("b", "setup_configuration", "Configuration"),
         ("q", "quit", "Quit"),
         ("ctrl+q", "quit", "Quit"),
@@ -756,7 +758,10 @@ class CftApp(App[None]):
                         zebra_stripes=True,
                         cell_padding=0,
                     )
-        yield Footer()
+        yield Static(
+            "Ctrl+P Open configuration  ·  R Refresh  ·  Q Quit",
+            id="footer-hints",
+        )
 
     @work(exclusive=True)
     async def on_mount(self) -> None:

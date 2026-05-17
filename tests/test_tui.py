@@ -259,6 +259,8 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert table.ordered_columns[7].width >= 9
         assert table.ordered_columns[8].width >= 5
         assert 5 <= table.ordered_columns[0].width <= 15
+        footer_hints = app.query_one("#footer-hints", Static)
+        assert footer_hints.content == "Ctrl+P Open configuration  ·  R Refresh  ·  Q Quit"
 
         table.focus()
         await pilot.press("down")
@@ -495,7 +497,10 @@ async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
         await wait_for_dashboard_ready(app, pilot)
 
         assert app.theme == CFT_AWS_THEME.name
-        assert {binding[0] for binding in app.BINDINGS} == {"r", "b", "q", "ctrl+q", "ctrl+c"}
+        assert {
+            binding.key if hasattr(binding, "key") else binding[0]
+            for binding in app.BINDINGS
+        } == {"r", "ctrl+p", "b", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -794,7 +799,7 @@ async def _assert_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None
 
         summary_button = app.query_one("#summary-configuration-action", Link)
         summary_button.focus()
-        await pilot.press("b")
+        await pilot.press("ctrl+p")
         await pilot.pause()
 
         assert isinstance(app.screen, ConfigurationMenuScreen)
@@ -860,7 +865,7 @@ async def _assert_tui_cwl_log_group_setup_flow_persists_selection(tmp_path) -> N
 
         summary_button = app.query_one("#summary-configuration-action", Link)
         summary_button.focus()
-        await pilot.press("b")
+        await pilot.press("ctrl+p")
         await pilot.pause()
 
         assert isinstance(app.screen, ConfigurationMenuScreen)
@@ -942,7 +947,7 @@ async def _assert_tui_cur_export_setup_shows_bucket_discovery_error(tmp_path) ->
         await pilot.pause()
         await wait_for_dashboard_ready(app, pilot)
 
-        await pilot.press("b")
+        await pilot.press("ctrl+p")
         await pilot.pause()
 
         assert isinstance(app.screen, ConfigurationMenuScreen)
