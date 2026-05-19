@@ -251,6 +251,42 @@ Footer {
     margin-bottom: 1;
 }
 
+#onboarding-modal {
+    align: center middle;
+    width: 100%;
+    height: 100%;
+    background: #00000066;
+}
+
+#onboarding-dialog {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+    padding: 1 2;
+}
+
+#onboarding-title {
+    color: $primary;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#onboarding-subtitle,
+#onboarding-warning,
+#onboarding-shortcuts,
+#onboarding-setup {
+    color: $foreground;
+    height: auto;
+    margin-bottom: 1;
+}
+
+#onboarding-content {
+    width: 100%;
+    height: auto;
+    max-height: 1fr;
+    margin-bottom: 1;
+}
+
 .configuration-menu-card {
     width: 100%;
     height: auto;

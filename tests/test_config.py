@@ -157,6 +157,7 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     state = ProfileCacheState(
         profile_name="dev",
         last_updated=datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
+        onboarding_seen=True,
         profile=ProfileSummaryCache(
             last_updated=datetime(2026, 5, 13, 12, tzinfo=timezone.utc),
             manifest_last_checked=datetime(2026, 5, 13, 11, tzinfo=timezone.utc),
@@ -210,6 +211,7 @@ def test_profile_cache_state_round_trips_nested_sources() -> None:
     round_tripped = ProfileCacheState.from_payload(payload)
 
     assert round_tripped.profile_name == "dev"
+    assert round_tripped.onboarding_seen is True
     assert round_tripped.profile.cost == 4.5
     assert round_tripped.profile.month_key == "2026-05"
     assert round_tripped.profile.s3_cur_bucket == "billing-bucket"
@@ -244,6 +246,12 @@ def test_distribution_cache_record_defaults_plan_type_to_payg() -> None:
 
     assert record.type == "PAYG"
     assert legacy.type == "PAYG"
+
+
+def test_profile_cache_state_defaults_onboarding_seen_to_false() -> None:
+    state = ProfileCacheState.from_payload({"profile_name": "dev"})
+
+    assert state.onboarding_seen is False
 
 
 def test_cache_policy_uses_utc_timestamps() -> None:

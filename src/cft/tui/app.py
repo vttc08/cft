@@ -13,6 +13,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
 from textual.color import Gradient
 from textual.binding import Binding
+from textual.css.query import NoMatches
 from textual.theme import Theme
 from textual import work
 from textual.widgets import (
@@ -35,6 +36,7 @@ from cft.aws.cloudwatch_logs import (
     CloudWatchLogGroupDiscoveryService,
     CloudWatchLogGroupSummary,
 )
+from cft.cache.store import JsonFileStore
 from cft.aws.s3 import S3BucketDiscoveryService
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import (
@@ -45,7 +47,7 @@ from cft.config.settings import (
     settings_profile_name,
 )
 from cft.data_exports import BillingSnapshot, CurDataExportService
-from cft.models.cache import SourceMetrics, normalize_distribution_type
+from cft.models.cache import ProfileCacheState, SourceMetrics, normalize_distribution_type
 from cft.models.cache import StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.startup_trace import StartupTrace
@@ -751,13 +753,14 @@ class CftApp(App[None]):
             configured=False,
             message="Setup required",
         )
+        self._show_onboarding = not self._has_seen_onboarding()
         self._last_inventory_from_cache = False
         self._last_usage_from_cache = False
         self._last_billing_from_cache = False
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Container(id="page"):
+        with Container(id="page", classes="hidden" if self._show_onboarding else ""):
             with Vertical(id="loading-panel", classes="panel"):
                 yield Static("Loading CloudFront data...", id="loading-title")
                 yield ProgressBar(id="loading-progress")
@@ -775,11 +778,59 @@ class CftApp(App[None]):
                         zebra_stripes=True,
                         cell_padding=0,
                     )
+        with Container(
+            id="onboarding-modal",
+            classes="" if self._show_onboarding else "hidden",
+        ):
+            with Vertical(id="onboarding-dialog", classes="panel"):
+                yield Static("Welcome to cft", id="onboarding-title")
+                with VerticalScroll(id="onboarding-content"):
+                    yield Static(
+                        "This screen appears only once and can be updated later.",
+                        id="onboarding-subtitle",
+                    )
+                    yield Static(
+                        (
+                            "Why the data may be limited:\n"
+                            "- CloudFront inventory comes from AWS access.\n"
+                            "- Current-month usage depends on CloudWatch metrics.\n"
+                            "- Billing totals depend on a linked AWS Data Export / CUR 2.0 delivery.\n"
+                            "- Upload visibility improves when CloudFront standard logs are linked.\n"
+                        ),
+                        id="onboarding-warning",
+                    )
+                    yield Static(
+                        (
+                            "Helpful shortcuts:\n"
+                            "- r refreshes data\n"
+                            "- Enter opens a distribution\n"
+                            "- Ctrl+P opens configuration\n"
+                            "- b opens configuration\n"
+                            "- q closes screens or quits\n"
+                        ),
+                        id="onboarding-shortcuts",
+                    )
+                    yield Static(
+                        (
+                            "Setup hints:\n"
+                            "- Link an AWS Data Export / CUR 2.0 bucket, prefix, and export name.\n"
+                            "- Configure distribution-specific logging if you want upload visibility.\n"
+                            "- Save profile-scoped overrides under ~/.cft/config/.\n"
+                        ),
+                        id="onboarding-setup",
+                    )
+                yield Button(
+                    "Continue",
+                    id="onboarding-continue",
+                    variant="primary",
+                    compact="compact",
+                )
         yield Footer()
 
-    @work(exclusive=True)
-    async def on_mount(self) -> None:
-        await self._load_data(refresh=False)
+    def on_mount(self) -> None:
+        if self._show_onboarding:
+            self.call_after_refresh(lambda: self.query_one("#onboarding-continue", Button).focus())
+        self.run_worker(self._load_data(refresh=False), exclusive=True)
 
     @work(exclusive=True)
     async def action_refresh(self) -> None:
@@ -797,6 +848,14 @@ class CftApp(App[None]):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "summary-configuration-action":
             self._open_configuration_menu()
+            event.stop()
+        elif event.button.id == "onboarding-continue":
+            self._dismiss_onboarding()
+            event.stop()
+
+    def on_key(self, event: events.Key) -> None:
+        if self._show_onboarding and event.key in {"enter", "escape", "q", "space"}:
+            self._dismiss_onboarding()
             event.stop()
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
@@ -1082,6 +1141,17 @@ class CftApp(App[None]):
         )
         self.action_refresh()
 
+    def _dismiss_onboarding(self) -> None:
+        if not self._show_onboarding:
+            return
+        self._show_onboarding = False
+        self._mark_onboarding_seen()
+        try:
+            self.query_one("#onboarding-modal", Container).add_class("hidden")
+            self.query_one("#page", Container).remove_class("hidden")
+        except NoMatches:
+            return
+
     def _load_bucket_names(self) -> tuple[str, ...]:
         if self._bucket_loader_is_default:
             return self._bucket_service.list_bucket_names()
@@ -1099,6 +1169,26 @@ class CftApp(App[None]):
             return snapshot
         self._last_billing_from_cache = False
         return self.billing_loader()
+
+    def _has_seen_onboarding(self) -> bool:
+        cache_store = JsonFileStore(self.paths.profile_state_file(self.settings_profile_name))
+        state = ProfileCacheState.from_payload(
+            cache_store.read(),
+            profile_name=self.settings_profile_name,
+        )
+        return state.onboarding_seen
+
+    def _mark_onboarding_seen(self) -> None:
+        cache_store = JsonFileStore(self.paths.profile_state_file(self.settings_profile_name))
+        state = ProfileCacheState.from_payload(
+            cache_store.read(),
+            profile_name=self.settings_profile_name,
+        )
+        if state.onboarding_seen:
+            return
+        cache_store.write_if_changed(
+            replace(state, profile_name=self.settings_profile_name, onboarding_seen=True).to_payload()
+        )
 
     @staticmethod
     def _merge_usage_snapshots(
@@ -1156,23 +1246,26 @@ class CftApp(App[None]):
         self,
         distribution: DistributionSummary | None = None,
     ) -> None:
+        try:
+            preview = self.query_one("#distribution-preview", DistributionUsagePreview)
+        except NoMatches:
+            return
+
         if self.inventory is None or not self.inventory.distributions:
-            self.query_one("#distribution-preview", DistributionUsagePreview).set_distribution(
-                None,
-                None,
-                {},
-            )
+            preview.set_distribution(None, None, {})
             return
 
         if distribution is None:
-            table = self.query_one("#distributions", DataTable)
+            try:
+                table = self.query_one("#distributions", DataTable)
+            except NoMatches:
+                return
             row_index = table.cursor_row if table.cursor_row >= 0 else 0
             if row_index >= table.row_count:
                 row_index = 0
             row_key = table.ordered_rows[row_index].key.value
             distribution = self._distribution_for_key(row_key)
 
-        preview = self.query_one("#distribution-preview", DistributionUsagePreview)
         preview.set_distribution(
             distribution,
             self._distribution_type_for(distribution.distribution_id) if distribution else None,

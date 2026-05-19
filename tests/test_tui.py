@@ -7,13 +7,14 @@ from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
 from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
 from cft.config.paths import AppPaths
 from cft.data_exports import BillingSnapshot
-from cft.models.cache import SourceMetrics, StandardLogDeliveryRecord
+from cft.models.cache import ProfileCacheState, SourceMetrics, StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
 from cft.tui.screens.config_menu import ConfigurationMenuScreen
 from cft.tui.screens.cwl_logs_setup import CwlLogGroupSetupScreen
 from cft.tui.screens.cur_export_setup import CurExportSetupScreen
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
+from textual.css.query import NoMatches
 from textual.widgets import Button, Digits, Footer, Input, Link, ListView, ProgressBar, Select, Static
 
 
@@ -160,8 +161,79 @@ async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) ->
     raise AssertionError("dashboard did not finish loading")
 
 
-def make_app(tmp_path, **kwargs) -> CftApp:
-    return CftApp(paths=AppPaths.from_base(tmp_path / "cft"), **kwargs)
+async def wait_for_onboarding_ready(app: CftApp, pilot, *, attempts: int = 20) -> None:
+    for _ in range(attempts):
+        try:
+            modal = app.query_one("#onboarding-modal")
+            title = app.query_one("#onboarding-title", Static)
+        except NoMatches:
+            await pilot.pause()
+            continue
+        if not modal.has_class("hidden") and title.content == "Welcome to cft":
+            return
+        await pilot.pause()
+    raise AssertionError("onboarding screen did not appear")
+
+
+def make_app(
+    tmp_path,
+    *,
+    profile_name: str | None = None,
+    onboarding_seen: bool = True,
+    **kwargs,
+) -> CftApp:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    if onboarding_seen:
+        seed_profile_name = profile_name or "default"
+        paths.profile_state_file(seed_profile_name).parent.mkdir(parents=True, exist_ok=True)
+        paths.profile_state_file(seed_profile_name).write_text(
+            json.dumps(
+                ProfileCacheState(
+                    profile_name=seed_profile_name,
+                    onboarding_seen=True,
+                ).to_payload()
+            ),
+            encoding="utf-8",
+        )
+    return CftApp(paths=paths, profile_name=profile_name, **kwargs)
+
+
+def test_tui_shows_onboarding_once_and_persists_dismissal(tmp_path) -> None:
+    asyncio.run(_assert_tui_shows_onboarding_once_and_persists_dismissal(tmp_path))
+
+
+async def _assert_tui_shows_onboarding_once_and_persists_dismissal(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        onboarding_seen=False,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await wait_for_onboarding_ready(app, pilot)
+        assert app.query_one("#onboarding-title", Static).content == "Welcome to cft"
+        assert "This screen appears only once" in app.query_one("#onboarding-subtitle", Static).content
+
+        await pilot.press("enter")
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        state_payload = json.loads(app.paths.profile_state_file("default").read_text(encoding="utf-8"))
+        assert state_payload["onboarding_seen"] is True
+
+    second_app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with second_app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert second_app.query_one("#onboarding-modal").has_class("hidden")
+        await wait_for_dashboard_ready(second_app, pilot)
 
 
 def test_tui_renders_summary_and_distribution_table(tmp_path) -> None:

@@ -32,6 +32,19 @@ def _string_or_none(value: object) -> str | None:
     return text or None
 
 
+def _bool_or_false(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return bool(value)
+
+
 def _first_present(payload: dict[str, Any], *keys: str) -> object:
     for key in keys:
         if key in payload:
@@ -360,6 +373,7 @@ class ProfileCacheState:
     profile_name: str = "default"
     last_updated: datetime | None = None
     identity: dict[str, str] | None = None
+    onboarding_seen: bool = False
     profile: ProfileSummaryCache = field(default_factory=ProfileSummaryCache)
     distributions: dict[str, DistributionCacheRecord] = field(default_factory=dict)
 
@@ -386,6 +400,7 @@ class ProfileCacheState:
             profile_name=str(payload.get("profile_name") or profile_name or "default"),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
             identity=_identity_from_payload(payload.get("identity")),
+            onboarding_seen=_bool_or_false(payload.get("onboarding_seen")),
             profile=ProfileSummaryCache.from_payload(profile_payload),
             distributions={
                 str(distribution_id): DistributionCacheRecord.from_payload(
@@ -411,6 +426,8 @@ class ProfileCacheState:
             payload["last_updated"] = format_utc_datetime(self.last_updated)
         if self.identity is not None:
             payload["identity"] = self.identity
+        if self.onboarding_seen:
+            payload["onboarding_seen"] = True
         return payload
 
     def with_inventory(
