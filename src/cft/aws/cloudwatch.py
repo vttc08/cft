@@ -11,6 +11,7 @@ from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceMetrics
+from cft.startup_trace import StartupTrace
 
 from .cloudfront import CloudFrontInventory
 
@@ -42,6 +43,7 @@ class CloudFrontUsageService:
         settings: AppSettings | None = None,
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
+        trace: StartupTrace | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -49,6 +51,7 @@ class CloudFrontUsageService:
         self.settings = settings
         self.session_factory = session_factory
         self.now = now
+        self.trace = trace
 
     def load(
         self,
@@ -58,10 +61,6 @@ class CloudFrontUsageService:
     ) -> CloudFrontUsageSnapshot:
         settings = self.settings or load_app_settings(
             self.paths, profile_name=settings_profile_name(inventory.profile_name)
-        )
-        session = self.session_factory(
-            profile_name=inventory.profile_name,
-            region_name=self.region_name or settings.aws.cloudfront_region,
         )
         self.paths.ensure_profile_dirs(inventory.profile_name)
         state_file = self.paths.profile_state_file(inventory.profile_name)
@@ -78,6 +77,7 @@ class CloudFrontUsageService:
         updated_distributions = dict(state.distributions)
         from_cache = True
         cloudwatch = None
+        session = None
 
         for distribution in inventory.distributions:
             existing = updated_distributions.get(distribution.distribution_id) or DistributionCacheRecord(
@@ -93,11 +93,22 @@ class CloudFrontUsageService:
                 and cache_policy.is_fresh(cached.last_updated, now=now)
             )
             if cache_is_fresh:
+                if self.trace is not None:
+                    self.trace.emit(
+                        "usage.cache",
+                        distribution_id=distribution.distribution_id,
+                        decision="cache_hit",
+                    )
                 usage_by_distribution[distribution.distribution_id] = cached
                 continue
 
             if cloudwatch is None:
                 try:
+                    if session is None:
+                        session = self.session_factory(
+                            profile_name=inventory.profile_name,
+                            region_name=self.region_name or settings.aws.cloudfront_region,
+                        )
                     cloudwatch = session.client(
                         "cloudwatch",
                         region_name=self.region_name or settings.aws.cloudfront_region,
@@ -110,6 +121,14 @@ class CloudFrontUsageService:
                         month_key=month_key
                     )
                     continue
+            if self.trace is not None:
+                self.trace.emit(
+                    "usage.cache",
+                    distribution_id=distribution.distribution_id,
+                    decision="refresh",
+                    cached_download=cached.download,
+                    cached_requests=cached.requests,
+                )
 
             try:
                 refreshed = self._refresh_distribution_usage(
@@ -138,7 +157,7 @@ class CloudFrontUsageService:
             profile_name=inventory.profile_name,
             distributions=updated_distributions,
         )
-        cache_store.write(updated_state.to_payload())
+        cache_store.write_if_changed(updated_state.to_payload())
         return CloudFrontUsageSnapshot(
             profile_name=inventory.profile_name,
             usage_by_distribution=usage_by_distribution,

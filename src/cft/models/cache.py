@@ -32,6 +32,13 @@ def _string_or_none(value: object) -> str | None:
     return text or None
 
 
+def _first_present(payload: dict[str, Any], *keys: str) -> object:
+    for key in keys:
+        if key in payload:
+            return payload[key]
+    return None
+
+
 def normalize_distribution_type(value: object | None) -> str:
     text = _string_or_none(value)
     if text is None:
@@ -114,20 +121,27 @@ class StandardLogDeliveryRecord:
             return cls(delivery_id="")
 
         return cls(
-            delivery_id=_string_or_none(payload.get("delivery_id") or payload.get("id")) or "",
-            delivery_arn=_string_or_none(payload.get("delivery_arn") or payload.get("arn")),
+            delivery_id=_string_or_none(_first_present(payload, "delivery_id", "id")) or "",
+            delivery_arn=_string_or_none(_first_present(payload, "delivery_arn", "arn")),
             delivery_destination_arn=_string_or_none(
-                payload.get("delivery_destination_arn") or payload.get("deliveryDestinationArn")
+                _first_present(payload, "delivery_destination_arn", "deliveryDestinationArn")
             ),
             delivery_destination_resource_arn=_string_or_none(
-                payload.get("delivery_destination_resource_arn")
-                or payload.get("deliveryDestinationResourceArn")
+                _first_present(
+                    payload,
+                    "delivery_destination_resource_arn",
+                    "deliveryDestinationResourceArn",
+                )
             ),
             delivery_destination_type=normalize_delivery_destination_type(
-                payload.get("delivery_destination_type") or payload.get("deliveryDestinationType")
+                _first_present(
+                    payload,
+                    "delivery_destination_type",
+                    "deliveryDestinationType",
+                )
             ),
             delivery_source_name=_string_or_none(
-                payload.get("delivery_source_name") or payload.get("deliverySourceName")
+                _first_present(payload, "delivery_source_name", "deliverySourceName")
             ),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
         )
@@ -161,12 +175,14 @@ class SourceMetrics:
             return cls()
 
         return cls(
-            download=_int_or_none(payload.get("download") or payload.get("bytes_downloaded")),
-            upload=_int_or_none(payload.get("upload") or payload.get("bytes_uploaded")),
-            requests=_int_or_none(payload.get("requests")),
+            download=_int_or_none(_first_present(payload, "download", "bytes_downloaded")),
+            upload=_int_or_none(_first_present(payload, "upload", "bytes_uploaded")),
+            requests=_int_or_none(_first_present(payload, "requests")),
             last_updated=parse_utc_datetime(payload.get("last_updated")),
             month_key=_string_or_none(payload.get("month_key")),
-            source_key=_string_or_none(payload.get("source_key") or payload.get("source_fingerprint")),
+            source_key=_string_or_none(
+                _first_present(payload, "source_key", "source_fingerprint")
+            ),
         )
 
     def to_payload(self) -> dict[str, Any]:
@@ -214,20 +230,20 @@ class ProfileSummaryCache:
             last_updated=parse_utc_datetime(payload.get("last_updated")),
             manifest_last_checked=parse_utc_datetime(payload.get("manifest_last_checked")),
             month_key=_string_or_none(payload.get("month_key")),
-            s3_cur_bucket=_string_or_none(payload.get("s3_cur_bucket") or payload.get("bucket")),
-            s3_cur_prefix=_string_or_none(payload.get("s3_cur_prefix") or payload.get("prefix")),
+            s3_cur_bucket=_string_or_none(_first_present(payload, "s3_cur_bucket", "bucket")),
+            s3_cur_prefix=_string_or_none(_first_present(payload, "s3_cur_prefix", "prefix")),
             s3_cur_export_name=_string_or_none(
-                payload.get("s3_cur_export_name") or payload.get("export_name")
+                _first_present(payload, "s3_cur_export_name", "export_name")
             ),
             manifest_key=_string_or_none(payload.get("manifest_key")),
             manifest_etag=_string_or_none(payload.get("manifest_etag")),
             parquet_files=_mapping_of_mapping_strings(payload.get("parquet_files")),
             data_start=parse_utc_datetime(payload.get("data_start")),
             data_end=parse_utc_datetime(payload.get("data_end")),
-            download=_int_or_none(payload.get("download") or payload.get("bytes_downloaded")),
-            upload=_int_or_none(payload.get("upload") or payload.get("bytes_uploaded")),
-            requests=_int_or_none(payload.get("requests")),
-            cost=_float_or_none(payload.get("cost")),
+            download=_int_or_none(_first_present(payload, "download", "bytes_downloaded")),
+            upload=_int_or_none(_first_present(payload, "upload", "bytes_uploaded")),
+            requests=_int_or_none(_first_present(payload, "requests")),
+            cost=_float_or_none(_first_present(payload, "cost")),
         )
 
     def to_payload(self) -> dict[str, Any]:

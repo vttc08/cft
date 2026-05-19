@@ -97,6 +97,16 @@ class FakeLogsClient:
         }
 
 
+class EmptyLogsClient(FakeLogsClient):
+    def get_query_results(self, *, queryId: str) -> dict[str, object]:
+        self.query_results_calls.append(queryId)
+        return {
+            "status": "Complete",
+            "results": [],
+            "statistics": {"bytesScanned": 42.0},
+        }
+
+
 class FakeDiscoveryLogsPaginator:
     def __init__(self, groups: list[dict[str, object]]) -> None:
         self.groups = groups
@@ -431,3 +441,39 @@ def test_cloudfront_logs_upload_service_uses_incremental_same_month_cache(tmp_pa
     assert snapshot.upload_by_distribution["E123"].upload == 1234
     assert logs_client.start_query_calls[0]["startTime"] == int(datetime(2026, 5, 1, 0, 0, tzinfo=timezone.utc).timestamp())
     assert logs_client.start_query_calls[0]["endTime"] == int(now.timestamp())
+
+
+def test_cloudfront_logs_upload_service_caches_zero_upload_without_requery(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(logs_upload_ttl_seconds=3600))
+
+    first = CloudFrontLogsUploadService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: FakeSession(EmptyLogsClient()),  # type: ignore[arg-type]
+        now=lambda: now,
+        query_poll_interval_seconds=0,
+    ).load(fake_inventory())
+
+    assert first.from_cache is False
+    assert first.upload_by_distribution["E123"].upload == 0
+
+    class NoSession:
+        profile_name = "dev"
+
+        def client(self, service_name: str, **_: object) -> object:
+            raise AssertionError(f"cache hit should not call {service_name}")
+
+    second = CloudFrontLogsUploadService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: NoSession(),  # type: ignore[arg-type]
+        now=lambda: now,
+        query_poll_interval_seconds=0,
+    ).load(fake_inventory())
+
+    assert second.from_cache is True
+    assert second.upload_by_distribution["E123"].upload == 0

@@ -10,12 +10,17 @@ uv sync --extra dev
 uv run pytest
 uv run cft --help
 uv run cft dev
+uv run cft startup-profile --profile default
 ```
 
 The project uses a `src/` layout and is packaged via `pyproject.toml`.
 
 Use `uv run cft` and `uv run cft dev` from the repo root when you are not
 activating the virtual environment manually.
+
+Use `uv run cft startup-profile` to print per-step startup timings without
+launching the interactive TUI. Set `CFT_STARTUP_TRACE=1` before `uv run cft`
+to emit the same trace during a normal TUI startup.
 
 `uv run cft dev` launches Textual in development mode so CSS changes in
 [`src/cft/tui/cft.tcss`](/home/kevin/Documents/cft/src/cft/tui/cft.tcss) are

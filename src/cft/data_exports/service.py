@@ -22,6 +22,7 @@ from cft.config.settings import (
     settings_profile_name,
 )
 from cft.models.cache import ProfileCacheState, ProfileSummaryCache
+from cft.startup_trace import StartupTrace
 
 SessionFactory = Callable[..., boto3.Session]
 
@@ -93,12 +94,14 @@ class CurDataExportService:
         settings: AppSettings | None = None,
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
+        trace: StartupTrace | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.paths = paths or get_app_paths()
         self.settings = settings
         self.session_factory = session_factory
         self.now = now
+        self.trace = trace
 
     def load(self, *, refresh: bool = False) -> BillingSnapshot:
         settings = self.settings or load_app_settings(
@@ -115,11 +118,7 @@ class CurDataExportService:
                 message="Setup required",
             )
 
-        session = self.session_factory(
-            profile_name=self.profile_name,
-            region_name=settings.aws.cloudfront_region,
-        )
-        profile_name = session.profile_name or self.profile_name or "default"
+        profile_name = self.profile_name or "default"
         self.paths.ensure_profile_dirs(profile_name)
 
         state_store = JsonFileStore(self.paths.billing_cache_file(profile_name))
@@ -156,12 +155,39 @@ class CurDataExportService:
             )
             and cached_profile.last_updated is not None
         ):
+            if self.trace is not None:
+                self.trace.emit(
+                    "billing.cache",
+                    profile_name=profile_name,
+                    decision="cache_hit",
+                )
             return self._snapshot_from_cache(
                 profile_name=profile_name,
                 summary=cached_profile,
                 configured=True,
                 from_cache=True,
             )
+
+        if self.trace is not None:
+            self.trace.emit(
+                "billing.cache",
+                profile_name=profile_name,
+                decision="refresh" if refresh else "stale_or_missing",
+            )
+
+        session = self.session_factory(
+            profile_name=self.profile_name,
+            region_name=settings.aws.cloudfront_region,
+        )
+        profile_name = session.profile_name or self.profile_name or "default"
+        if profile_name != (self.profile_name or "default"):
+            self.paths.ensure_profile_dirs(profile_name)
+            state_store = JsonFileStore(self.paths.billing_cache_file(profile_name))
+            state = ProfileCacheState.from_payload(
+                state_store.read(),
+                profile_name=profile_name,
+            )
+            cached_profile = state.profile
 
         s3_client = session.client("s3")
         local_manifest_file = self.paths.data_export_manifest_file(
@@ -248,7 +274,7 @@ class CurDataExportService:
             requests=summary.requests,
             cost=summary.cost,
         )
-        state_store.write(replace(state, profile=updated_profile).to_payload())
+        state_store.write_if_changed(replace(state, profile=updated_profile).to_payload())
         return BillingSnapshot(
             profile_name=profile_name,
             configured=True,

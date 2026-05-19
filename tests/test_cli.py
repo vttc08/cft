@@ -77,3 +77,19 @@ def test_config_paths_command_renders_json(monkeypatch, tmp_path) -> None:
     assert str(tmp_path / "cft-home" / "config" / "dev.toml") in result.stdout
     assert str(tmp_path / "cft-home" / "cache" / "dev" / "state.json") in result.stdout
     assert str(tmp_path / "cft-home" / "data" / "data_exports" / "dev" / "parquet") in result.stdout
+
+
+def test_startup_profile_command_renders_trace(monkeypatch) -> None:
+    monkeypatch.setattr(
+        main_module,
+        "profile_startup",
+        lambda profile_name=None, refresh=False: (
+            f"profile={profile_name} refresh={refresh}\nstartup.total: 1.0ms"
+        ),
+    )
+
+    result = runner.invoke(app, ["startup-profile", "--profile", "dev"])
+
+    assert result.exit_code == 0
+    assert "profile=dev refresh=False" in result.stdout
+    assert "startup.total" in result.stdout

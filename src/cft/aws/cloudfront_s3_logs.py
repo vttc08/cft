@@ -16,6 +16,7 @@ from cft.cache.store import JsonFileStore
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceMetrics
+from cft.startup_trace import StartupTrace
 
 from .cloudfront import CloudFrontInventory
 
@@ -53,6 +54,7 @@ class CloudFrontS3LogsUploadService:
         settings: AppSettings | None = None,
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
+        trace: StartupTrace | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -60,6 +62,7 @@ class CloudFrontS3LogsUploadService:
         self.settings = settings
         self.session_factory = session_factory
         self.now = now
+        self.trace = trace
 
     def load(
         self,
@@ -70,10 +73,6 @@ class CloudFrontS3LogsUploadService:
         settings = self.settings or load_app_settings(
             self.paths,
             profile_name=settings_profile_name(inventory.profile_name),
-        )
-        session = self.session_factory(
-            profile_name=inventory.profile_name,
-            region_name=self.region_name or settings.aws.cloudfront_region,
         )
         self.paths.ensure_profile_dirs(inventory.profile_name)
         state_file = self.paths.profile_state_file(inventory.profile_name)
@@ -87,11 +86,6 @@ class CloudFrontS3LogsUploadService:
         month_key = self._month_key(now)
         month_start = self._month_start(now)
         cache_policy = CachePolicy.from_seconds(settings.cache.logs_upload_ttl_seconds)
-        s3_client = session.client(
-            "s3",
-            region_name=self.region_name or settings.aws.cloudfront_region,
-        )
-
         sources_by_distribution = self._distribution_s3_sources(inventory)
         source_key_by_distribution = self._distribution_source_keys(sources_by_distribution)
         target_distribution_ids = self._target_distribution_ids(
@@ -128,9 +122,24 @@ class CloudFrontS3LogsUploadService:
             if not cache_is_fresh:
                 query_needed = True
                 break
+            if self.trace is not None:
+                self.trace.emit(
+                    "s3_logs.cache",
+                    distribution_id=distribution.distribution_id,
+                    decision="cache_hit",
+                )
 
         downloaded_files: list[Path] = []
+        summary_by_distribution: dict[str, int] = {}
         if query_needed:
+            session = self.session_factory(
+                profile_name=inventory.profile_name,
+                region_name=self.region_name or settings.aws.cloudfront_region,
+            )
+            s3_client = session.client(
+                "s3",
+                region_name=self.region_name or settings.aws.cloudfront_region,
+            )
             source_thresholds = self._source_thresholds(
                 inventory=inventory,
                 state=state,
@@ -154,12 +163,11 @@ class CloudFrontS3LogsUploadService:
                     continue
                 except Exception:
                     continue
-
-        local_parquet_files = self._local_parquet_files(
-            profile_name=inventory.profile_name,
-            month_key=month_key,
-        )
-        summary_by_distribution = self._query_summary(local_parquet_files)
+            local_parquet_files = self._local_parquet_files(
+                profile_name=inventory.profile_name,
+                month_key=month_key,
+            )
+            summary_by_distribution = self._query_summary(local_parquet_files)
 
         for distribution in inventory.distributions:
             if distribution.distribution_id not in target_distribution_ids:
@@ -184,6 +192,13 @@ class CloudFrontS3LogsUploadService:
             if cache_is_fresh:
                 upload_by_distribution[distribution.distribution_id] = cached
                 continue
+            if self.trace is not None:
+                self.trace.emit(
+                    "s3_logs.cache",
+                    distribution_id=distribution.distribution_id,
+                    decision="refresh" if query_needed else "clear",
+                    cached_upload=cached.upload,
+                )
 
             if not query_needed:
                 if cached.upload is not None and cached.source_key == source_key:
@@ -232,7 +247,7 @@ class CloudFrontS3LogsUploadService:
             profile_name=inventory.profile_name,
             distributions=updated_distributions,
         )
-        cache_store.write(updated_state.to_payload())
+        cache_store.write_if_changed(updated_state.to_payload())
         return CloudFrontS3LogsUploadSnapshot(
             profile_name=inventory.profile_name,
             upload_by_distribution=upload_by_distribution,
@@ -484,6 +499,7 @@ class CloudFrontS3LogsUploadService:
         last_updated: datetime | None = None,
     ) -> SourceMetrics:
         return SourceMetrics(
+            upload=0,
             month_key=month_key,
             source_key=source_key,
             last_updated=last_updated,

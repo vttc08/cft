@@ -48,6 +48,7 @@ from cft.data_exports import BillingSnapshot, CurDataExportService
 from cft.models.cache import SourceMetrics, normalize_distribution_type
 from cft.models.cache import StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
+from cft.startup_trace import StartupTrace
 from cft.tui.screens.cwl_logs_setup import (
     CwlLogGroupSetupResult,
     CwlLogGroupSetupScreen,
@@ -681,12 +682,14 @@ class CftApp(App[None]):
         paths: AppPaths | None = None,
         now: Callable[[], datetime] = datetime.now,
         watch_css: bool = False,
+        startup_trace: StartupTrace | None = None,
     ) -> None:
         super().__init__(watch_css=watch_css)
         self.register_theme(CFT_AWS_THEME)
         self.theme = CFT_AWS_THEME.name
         self.profile_name = profile_name
         self.paths = paths or get_app_paths()
+        self.startup_trace = startup_trace or StartupTrace.from_env()
         self.settings_profile_name = settings_profile_name(profile_name)
         self.settings = load_app_settings(
             self.paths,
@@ -695,18 +698,26 @@ class CftApp(App[None]):
         self._inventory_service = CloudFrontInventoryService(
             profile_name=profile_name,
             paths=self.paths,
+            settings=self.settings,
+            trace=self.startup_trace,
         )
         self._usage_service = CloudFrontUsageService(
             profile_name=profile_name,
             paths=self.paths,
+            settings=self.settings,
+            trace=self.startup_trace,
         )
         self._s3_logs_upload_service = CloudFrontS3LogsUploadService(
             profile_name=profile_name,
             paths=self.paths,
+            settings=self.settings,
+            trace=self.startup_trace,
         )
         self._logs_upload_service = CloudFrontLogsUploadService(
             profile_name=profile_name,
             paths=self.paths,
+            settings=self.settings,
+            trace=self.startup_trace,
         )
         self._log_group_service = CloudWatchLogGroupDiscoveryService(
             profile_name=profile_name,
@@ -719,6 +730,8 @@ class CftApp(App[None]):
         self._billing_service = CurDataExportService(
             profile_name=profile_name,
             paths=self.paths,
+            settings=self.settings,
+            trace=self.startup_trace,
         )
         self._inventory_loader_is_default = inventory_loader is None
         self._usage_loader_is_default = usage_loader is None
@@ -738,6 +751,9 @@ class CftApp(App[None]):
             configured=False,
             message="Setup required",
         )
+        self._last_inventory_from_cache = False
+        self._last_usage_from_cache = False
+        self._last_billing_from_cache = False
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -816,31 +832,39 @@ class CftApp(App[None]):
     async def _load_data(self, *, refresh: bool) -> None:
         self._set_loading_state(True, "Loading CloudFront inventory...")
         try:
-            self.inventory = await asyncio.to_thread(self._load_inventory, refresh=refresh)
+            with self.startup_trace.step("startup.inventory", refresh=refresh) as step:
+                self.inventory = await asyncio.to_thread(self._load_inventory, refresh=refresh)
+                step["from_cache"] = self._last_inventory_from_cache
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
             self._set_status(f"AWS inventory unavailable: {error}")
             self._set_loading_state(False, f"AWS inventory unavailable: {error}")
+            self.startup_trace.write()
             return
 
         try:
             self._set_loading_state(True, "Loading CloudWatch usage and logs...")
-            self.usage_by_distribution = await asyncio.to_thread(
-                self._load_usage,
-                self.inventory,
-                refresh=refresh,
-            )
+            with self.startup_trace.step("startup.usage", refresh=refresh) as step:
+                self.usage_by_distribution = await asyncio.to_thread(
+                    self._load_usage,
+                    self.inventory,
+                    refresh=refresh,
+                )
+                step["from_cache"] = self._last_usage_from_cache
         except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
             self.usage_by_distribution = {}
             self._set_status(f"CloudWatch usage unavailable: {error}")
             self._set_loading_state(False, f"CloudWatch usage unavailable: {error}")
+            self.startup_trace.write()
             return
 
         try:
             self._set_loading_state(True, "Loading CUR billing summary...")
-            self.billing_snapshot = await asyncio.to_thread(
-                self._load_billing,
-                refresh=refresh,
-            )
+            with self.startup_trace.step("startup.billing", refresh=refresh) as step:
+                self.billing_snapshot = await asyncio.to_thread(
+                    self._load_billing,
+                    refresh=refresh,
+                )
+                step["from_cache"] = self._last_billing_from_cache
         except Exception as error:  # pragma: no cover - exact boto3/duckdb errors vary.
             self.billing_snapshot = BillingSnapshot(
                 profile_name=self.settings_profile_name,
@@ -854,17 +878,34 @@ class CftApp(App[None]):
         self._refresh_distribution_table()
         self._refresh_summary()
         self._refresh_active_distribution_preview()
-        self._set_loading_state(False, f"Loaded CloudFront data at {self.now():%H:%M:%S}")
+        loaded_from_cache = (
+            self._last_inventory_from_cache
+            and self._last_usage_from_cache
+            and self._last_billing_from_cache
+        )
+        self._set_loading_state(
+            False,
+            (
+                f"Loaded cached CloudFront data at {self.now():%H:%M:%S}"
+                if loaded_from_cache
+                else f"Loaded CloudFront data at {self.now():%H:%M:%S}"
+            ),
+        )
         if refresh:
             refreshed_at = self.now().strftime("%H:%M:%S")
             message = f"Refreshed CloudWatch usage and logs at {refreshed_at}"
             self._set_status(message)
             self.notify(message, title="cft refresh", severity="information", timeout=2.5)
+        self.startup_trace.write()
 
     def _load_inventory(self, *, refresh: bool) -> CloudFrontInventory:
         if self._inventory_loader_is_default:
-            return self._inventory_service.load(refresh=refresh)
-        return self.inventory_loader()
+            inventory = self._inventory_service.load(refresh=refresh)
+            self._last_inventory_from_cache = inventory.from_cache
+            return inventory
+        inventory = self.inventory_loader()
+        self._last_inventory_from_cache = getattr(inventory, "from_cache", False)
+        return inventory
 
     def _load_usage(
         self,
@@ -876,6 +917,11 @@ class CftApp(App[None]):
             snapshot = self._usage_service.load(inventory, refresh=refresh)
             s3_upload_snapshot = self._s3_logs_upload_service.load(inventory, refresh=refresh)
             upload_snapshot = self._logs_upload_service.load(inventory, refresh=refresh)
+            self._last_usage_from_cache = (
+                snapshot.from_cache
+                and s3_upload_snapshot.from_cache
+                and upload_snapshot.from_cache
+            )
             return self._merge_usage_snapshots(
                 self._merge_usage_snapshots(
                     snapshot.usage_by_distribution,
@@ -883,6 +929,7 @@ class CftApp(App[None]):
                 ),
                 upload_snapshot.upload_by_distribution,
             )
+        self._last_usage_from_cache = False
         return self.usage_loader(inventory)
 
     def _set_loading_state(self, loading: bool, message: str) -> None:
@@ -1047,7 +1094,10 @@ class CftApp(App[None]):
 
     def _load_billing(self, *, refresh: bool) -> BillingSnapshot:
         if self._billing_loader_is_default:
-            return self._billing_service.load(refresh=refresh)
+            snapshot = self._billing_service.load(refresh=refresh)
+            self._last_billing_from_cache = snapshot.from_cache
+            return snapshot
+        self._last_billing_from_cache = False
         return self.billing_loader()
 
     @staticmethod
@@ -1498,3 +1548,13 @@ def run_tui(profile_name: str | None = None, *, watch_css: bool = False) -> None
         return
 
     CftApp(profile_name=profile_name, watch_css=watch_css).run()
+
+
+def profile_startup(profile_name: str | None = None, *, refresh: bool = False) -> str:
+    trace = StartupTrace(enabled=True)
+    app = CftApp(profile_name=profile_name, startup_trace=trace)
+    with trace.step("startup.total", refresh=refresh):
+        inventory = app._load_inventory(refresh=refresh)
+        app._load_usage(inventory, refresh=refresh)
+        app._load_billing(refresh=refresh)
+    return trace.render_text()

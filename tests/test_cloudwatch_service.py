@@ -365,3 +365,47 @@ def test_cloudfront_usage_service_refreshes_incomplete_current_month_cache(tmp_p
 
     assert snapshot.usage_by_distribution["E123"].download == 50
     assert snapshot.usage_by_distribution["E123"].requests == 15
+
+
+def test_cloudfront_usage_service_treats_zero_values_as_complete_cached_usage(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc)
+    settings = AppSettings(cache=CacheSettings(usage_ttl_seconds=3600))
+    paths.profile_state_file("dev").parent.mkdir(parents=True, exist_ok=True)
+    paths.profile_state_file("dev").write_text(
+        json.dumps(
+            {
+                "profile_name": "dev",
+                "distributions": {
+                    "E123": {
+                        "cw": {
+                            "download": 0,
+                            "requests": 0,
+                            "last_updated": "2026-05-13T11:30:00Z",
+                            "month_key": "2026-05",
+                        }
+                    }
+                },
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    class NoSession:
+        profile_name = "dev"
+
+        def client(self, service_name: str, **_: object) -> object:
+            raise AssertionError(f"cache hit should not call {service_name}")
+
+    snapshot = CloudFrontUsageService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: NoSession(),  # type: ignore[arg-type]
+        now=lambda: now,
+    ).load(fake_inventory())
+
+    assert snapshot.from_cache is True
+    assert snapshot.usage_by_distribution["E123"].download == 0
+    assert snapshot.usage_by_distribution["E123"].requests == 0

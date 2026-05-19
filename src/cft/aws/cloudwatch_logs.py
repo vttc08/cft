@@ -16,6 +16,7 @@ from cft.models.cache import (
     ProfileCacheState,
     SourceMetrics,
 )
+from cft.startup_trace import StartupTrace
 
 from .cloudfront import CloudFrontInventory
 
@@ -114,6 +115,7 @@ class CloudFrontLogsUploadService:
         now: Callable[[], datetime] = utc_now,
         query_poll_interval_seconds: float = DEFAULT_QUERY_POLL_INTERVAL_SECONDS,
         query_timeout_seconds: float = DEFAULT_QUERY_TIMEOUT_SECONDS,
+        trace: StartupTrace | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -123,6 +125,7 @@ class CloudFrontLogsUploadService:
         self.now = now
         self.query_poll_interval_seconds = max(0.0, query_poll_interval_seconds)
         self.query_timeout_seconds = max(1.0, query_timeout_seconds)
+        self.trace = trace
 
     def load(
         self,
@@ -132,10 +135,6 @@ class CloudFrontLogsUploadService:
     ) -> CloudFrontLogsUploadSnapshot:
         settings = self.settings or load_app_settings(
             self.paths, profile_name=settings_profile_name(inventory.profile_name)
-        )
-        session = self.session_factory(
-            profile_name=inventory.profile_name,
-            region_name=self.region_name or settings.aws.cloudfront_region,
         )
         self.paths.ensure_profile_dirs(inventory.profile_name)
         state_file = self.paths.profile_state_file(inventory.profile_name)
@@ -148,15 +147,11 @@ class CloudFrontLogsUploadService:
         month_key = self._month_key(now)
         cache_policy = CachePolicy.from_seconds(settings.cache.logs_upload_ttl_seconds)
 
-        logs_client = session.client(
-            "logs",
-            region_name=self.region_name or settings.aws.cloudfront_region,
-        )
         manual_log_group = self._normalize_log_group_identifier(settings.aws.cwl_log_group or "")
         distribution_log_groups = self._distribution_log_groups(
             inventory,
             manual_log_group=manual_log_group,
-            logs_client=logs_client,
+            logs_client=None,
         )
         distribution_source_keys = self._distribution_source_keys(
             distribution_log_groups,
@@ -194,6 +189,12 @@ class CloudFrontLogsUploadService:
                 if not cache_is_fresh:
                     query_needed = True
                     break
+                if self.trace is not None:
+                    self.trace.emit(
+                        "cwl.cache",
+                        distribution_id=distribution.distribution_id,
+                        decision="cache_hit",
+                    )
 
         query_groups = tuple(
             sorted({group for groups in distribution_log_groups.values() for group in groups})
@@ -203,6 +204,14 @@ class CloudFrontLogsUploadService:
         group_to_batch_index: dict[str, int] = {}
 
         if query_needed and query_batches:
+            session = self.session_factory(
+                profile_name=inventory.profile_name,
+                region_name=self.region_name or settings.aws.cloudfront_region,
+            )
+            logs_client = session.client(
+                "logs",
+                region_name=self.region_name or settings.aws.cloudfront_region,
+            )
             for batch in query_batches:
                 try:
                     batch_results.append(
@@ -243,6 +252,13 @@ class CloudFrontLogsUploadService:
             if cache_is_fresh:
                 upload_by_distribution[distribution.distribution_id] = cached
                 continue
+            if self.trace is not None:
+                self.trace.emit(
+                    "cwl.cache",
+                    distribution_id=distribution.distribution_id,
+                    decision="refresh" if query_needed else "clear",
+                    cached_upload=cached.upload,
+                )
 
             if not query_needed:
                 if cached.upload is not None and cached.source_key == source_key:
@@ -317,7 +333,7 @@ class CloudFrontLogsUploadService:
             profile_name=inventory.profile_name,
             distributions=updated_distributions,
         )
-        cache_store.write(updated_state.to_payload())
+        cache_store.write_if_changed(updated_state.to_payload())
         return CloudFrontLogsUploadSnapshot(
             profile_name=inventory.profile_name,
             upload_by_distribution=upload_by_distribution,
@@ -517,6 +533,7 @@ class CloudFrontLogsUploadService:
         last_updated: datetime | None = None,
     ) -> SourceMetrics:
         return SourceMetrics(
+            upload=0,
             month_key=month_key,
             source_key=source_key,
             last_updated=last_updated,

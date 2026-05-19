@@ -201,6 +201,18 @@ def test_cur_service_downloads_manifest_and_parquet_then_uses_cache(tmp_path) ->
     assert profile_payload["manifest_etag"] == "manifest-etag"
     assert profile_payload["parquet_files"][parquet_key]["etag"] == "parquet-etag"
 
+    cached_service = CurDataExportService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **kwargs: (_ for _ in ()).throw(AssertionError("session not expected")),
+        now=lambda: current_now["value"],
+    )
+
+    cached = cached_service.load()
+
+    assert cached.from_cache is True
+
     stubber.deactivate()
 
 

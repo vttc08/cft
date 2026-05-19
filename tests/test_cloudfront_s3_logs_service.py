@@ -292,3 +292,57 @@ def test_cloudfront_s3_logs_upload_service_downloads_only_new_files_after_cache_
         "AWSLogs/123456789012/CloudFront/E123.2026-05-10.abc.parquet",
         "AWSLogs/123456789012/CloudFront/E123.2026-05-12.xyz.parquet",
     ]
+
+
+def test_cloudfront_s3_logs_upload_service_uses_fresh_cache_without_s3_calls(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    settings = AppSettings(
+        aws=AwsSettings(),
+        cache=CacheSettings(logs_upload_ttl_seconds=3600),
+    )
+    current = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
+    pages = [
+        {
+            "Contents": [
+                {
+                    "Key": "AWSLogs/123456789012/CloudFront/E123.2026-05-10.abc.parquet",
+                    "LastModified": datetime(2026, 5, 13, 10, tzinfo=timezone.utc),
+                }
+            ]
+        }
+    ]
+    downloads = {
+        "AWSLogs/123456789012/CloudFront/E123.2026-05-10.abc.parquet": write_s3_log_parquet(
+            tmp_path / "e123.parquet",
+            distribution_id="E123",
+            upload_bytes=100,
+        ),
+    }
+    first = CloudFrontS3LogsUploadService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: FakeSession(FakeS3Client(pages, downloads)),  # type: ignore[arg-type]
+        now=lambda: current,
+    ).load(fake_inventory())
+
+    assert first.upload_by_distribution["E123"].upload == 100
+    assert first.upload_by_distribution["E456"].upload == 0
+
+    class NoSession:
+        profile_name = "dev"
+
+        def client(self, service_name: str, **_: object) -> object:
+            raise AssertionError(f"cache hit should not call {service_name}")
+
+    second = CloudFrontS3LogsUploadService(
+        profile_name="dev",
+        paths=paths,
+        settings=settings,
+        session_factory=lambda **_: NoSession(),  # type: ignore[arg-type]
+        now=lambda: datetime(2026, 5, 13, 12, 30, tzinfo=timezone.utc),
+    ).load(fake_inventory())
+
+    assert second.from_cache is True
+    assert second.upload_by_distribution["E123"].upload == 100
+    assert second.upload_by_distribution["E456"].upload == 0

@@ -23,6 +23,7 @@ from cft.models.cache import (
     normalize_distribution_type,
 )
 from cft.models.distribution import DistributionSummary, normalize_distribution
+from cft.startup_trace import StartupTrace
 
 STANDARD_LOG_SOURCE_RE = re.compile(r"^CreatedByCloudFront-(?P<distribution_id>[A-Za-z0-9]+)-")
 
@@ -61,6 +62,7 @@ class CloudFrontInventoryService:
         settings: AppSettings | None = None,
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
+        trace: StartupTrace | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -68,16 +70,14 @@ class CloudFrontInventoryService:
         self.settings = settings
         self.session_factory = session_factory
         self.now = now
+        self.trace = trace
 
     def load(self, *, refresh: bool = False) -> CloudFrontInventory:
+        requested_profile_name = settings_profile_name(self.profile_name)
         settings = self.settings or load_app_settings(
-            self.paths, profile_name=settings_profile_name(self.profile_name)
+            self.paths, profile_name=requested_profile_name
         )
-        session = self.session_factory(
-            profile_name=self.profile_name,
-            region_name=self.region_name or settings.aws.cloudfront_region,
-        )
-        profile_name = session.profile_name or self.profile_name or "default"
+        profile_name = requested_profile_name
         self.paths.ensure_profile_dirs(profile_name)
 
         cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
@@ -92,34 +92,32 @@ class CloudFrontInventoryService:
             and not refresh
             and cache_policy.is_fresh(cache_last_updated, now=now)
         ):
-            try:
-                standard_log_deliveries = self._list_standard_log_deliveries(
-                    session,
-                    loaded_at=now,
-                )
-            except Exception:
-                cached_inventory = self._inventory_from_cache(state)
-                if cached_inventory is not None:
-                    return cached_inventory
-            else:
-                if standard_log_deliveries:
-                    refreshed_state = state.with_inventory(
-                        profile_name=profile_name,
-                        identity=state.identity,
-                        inventory={
-                            distribution_id: record.inventory
-                            for distribution_id, record in state.distributions.items()
-                        },
-                        last_updated=now,
-                        standard_log_deliveries=standard_log_deliveries,
-                    )
-                    cache_store.write(refreshed_state.to_payload())
-                    cached_inventory = self._inventory_from_cache(refreshed_state)
-                    if cached_inventory is not None:
-                        return cached_inventory
             cached_inventory = self._inventory_from_cache(state)
             if cached_inventory is not None:
+                if self.trace is not None:
+                    self.trace.emit(
+                        "inventory.cache",
+                        profile_name=profile_name,
+                        decision="cache_hit",
+                    )
                 return cached_inventory
+        elif self.trace is not None:
+            self.trace.emit(
+                "inventory.cache",
+                profile_name=profile_name,
+                decision="refresh" if refresh else "stale_or_missing",
+            )
+
+        session = self.session_factory(
+            profile_name=self.profile_name,
+            region_name=self.region_name or settings.aws.cloudfront_region,
+        )
+        profile_name = session.profile_name or self.profile_name or "default"
+        if profile_name != requested_profile_name:
+            self.paths.ensure_profile_dirs(profile_name)
+            cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
+            cache_payload = cache_store.read()
+            state = ProfileCacheState.from_payload(cache_payload, profile_name=profile_name)
 
         try:
             inventory = self._load_from_aws(session, profile_name, state, loaded_at=now)
@@ -149,7 +147,7 @@ class CloudFrontInventoryService:
             cache_last_updated=now,
             from_cache=False,
         )
-        cache_store.write(refreshed_state.to_payload())
+        cache_store.write_if_changed(refreshed_state.to_payload())
         return refreshed_inventory
 
     def _load_from_aws(

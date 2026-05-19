@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from cft.config.paths import get_app_paths
-from cft.tui.app import run_tui
+from cft.tui.app import profile_startup, run_tui
 
 app = typer.Typer(
     add_completion=False,
@@ -42,6 +42,21 @@ def _package_version() -> str:
 def version_command() -> None:
     """Print the installed package version."""
     typer.echo(_package_version())
+
+
+@app.command("startup-profile")
+def startup_profile_command(
+    profile: Annotated[
+        str | None,
+        typer.Option("--profile", "-p", help="AWS profile to use."),
+    ] = None,
+    refresh: Annotated[
+        bool,
+        typer.Option("--refresh", help="Force live refresh instead of warm-cache profiling."),
+    ] = False,
+) -> None:
+    """Print a step-by-step startup timing trace without launching the TUI."""
+    typer.echo(profile_startup(profile_name=profile, refresh=refresh))
 
 
 @config_app.command("paths")
