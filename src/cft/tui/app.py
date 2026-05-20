@@ -26,6 +26,11 @@ from textual.widgets import (
     ProgressBar,
     Static,
 )
+
+try:
+    from textual.widgets import Markdown
+except Exception:
+    Markdown = None
 from textual.widgets._progress_bar import Bar
 
 from cft.aws.cloudwatch import CloudFrontUsageService
@@ -789,36 +794,35 @@ class CftApp(App[None]):
                         "This screen appears only once and can be updated later.",
                         id="onboarding-subtitle",
                     )
-                    yield Static(
-                        (
-                            "Why the data may be limited:\n"
-                            "- CloudFront inventory comes from AWS access.\n"
-                            "- Current-month usage depends on CloudWatch metrics.\n"
-                            "- Billing totals depend on a linked AWS Data Export / CUR 2.0 delivery.\n"
-                            "- Upload visibility improves when CloudFront standard logs are linked.\n"
-                        ),
-                        id="onboarding-warning",
-                    )
-                    yield Static(
-                        (
-                            "Helpful shortcuts:\n"
-                            "- r refreshes data\n"
-                            "- Enter opens a distribution\n"
-                            "- Ctrl+P opens configuration\n"
-                            "- b opens configuration\n"
-                            "- q closes screens or quits\n"
-                        ),
-                        id="onboarding-shortcuts",
-                    )
-                    yield Static(
-                        (
-                            "Setup hints:\n"
-                            "- Link an AWS Data Export / CUR 2.0 bucket, prefix, and export name.\n"
-                            "- Configure distribution-specific logging if you want upload visibility.\n"
-                            "- Save profile-scoped overrides under ~/.cft/config/.\n"
-                        ),
-                        id="onboarding-setup",
-                    )
+                    # Load markup from an editable markdown file so developers can author content easily.
+                    try:
+                        markdown_path = Path(__file__).with_name("content").joinpath("onboarding.md")
+                        if markdown_path.exists():
+                            markdown_text = markdown_path.read_text(encoding="utf-8")
+                        else:
+                            markdown_text = (
+                                "### Why the data may be limited\n\n"
+                                "- CloudFront inventory comes from AWS access.\n"
+                                "- Current-month usage depends on CloudWatch metrics.\n"
+                                "- Billing totals depend on a linked AWS Data Export / CUR 2.0 delivery.\n"
+                                "- Upload visibility improves when CloudFront standard logs are linked.\n\n"
+                                "### Helpful shortcuts\n\n"
+                                "- **r** refreshes data\n"
+                                "- **Enter** opens a distribution\n"
+                                "- **Ctrl+P** opens configuration\n"
+                                "- **b** opens configuration\n"
+                                "- **q** closes screens or quits\n\n"
+                                "### Setup hints\n\n"
+                                "- Link an AWS Data Export / CUR 2.0 bucket, prefix, and export name.\n"
+                                "- Configure distribution-specific logging if you want upload visibility.\n"
+                                "- Save profile-scoped overrides under `~/.cft/config/`.\n"
+                            )
+                    except Exception:
+                        markdown_text = "This screen appears only once and can be updated later."
+                    if Markdown is not None:
+                        yield Markdown(markdown_text, id="onboarding-markdown")
+                    else:
+                        yield Static(markdown_text, id="onboarding-markdown")
                 yield Button(
                     "Continue",
                     id="onboarding-continue",
