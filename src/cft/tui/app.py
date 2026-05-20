@@ -279,6 +279,7 @@ class SummaryWidgetShowcase(Vertical):
         self.query_one("#summary-configuration-action", SetupConfigurationLink).update(
             "Edit Configuration"
         )
+        self._refresh_cost_value(self.data.cost)
 
     def _panel_content_width(self, widget_id: str) -> int:
         try:
@@ -378,8 +379,13 @@ class SummaryWidgetShowcase(Vertical):
                 Static("$", id="summary-cost-prefix", classes="summary-cost-prefix"),
                 Digits(
                     SummaryWidgetShowcase._cost_digits_text(value),
-                    id=value_id,
+                    id=f"{value_id}-digits",
                     classes="summary-cost-digits",
+                ),
+                Static(
+                    SummaryWidgetShowcase._cost_digits_text(value),
+                    id=f"{value_id}-text",
+                    classes="summary-cost-text hidden",
                 ),
                 classes="summary-cost-display",
                 id="summary-cost-display",
@@ -406,7 +412,36 @@ class SummaryWidgetShowcase(Vertical):
         return f"{value:.2f}"
 
     def _refresh_cost_value(self, value: int | float | None) -> None:
-        self.query_one("#summary-cost-value", Digits).update(self._cost_digits_text(value))
+        cost_text = self._cost_digits_text(value)
+        self.query_one("#summary-cost-value-digits", Digits).update(cost_text)
+        self.query_one("#summary-cost-value-text", Static).update(cost_text)
+        self._set_cost_display_mode(cost_text)
+
+    def _set_cost_display_mode(self, cost_text: str) -> None:
+        digits_widget = self.query_one("#summary-cost-value-digits", Digits)
+        text_widget = self.query_one("#summary-cost-value-text", Static)
+        if self._should_use_cost_digits(cost_text):
+            digits_widget.remove_class("hidden")
+            text_widget.add_class("hidden")
+        else:
+            digits_widget.add_class("hidden")
+            text_widget.remove_class("hidden")
+
+    def _should_use_cost_digits(self, cost_text: str) -> bool:
+        width = self._summary_cost_width()
+        if width <= 0:
+            return True
+        required_width = max(10, len(cost_text) * 3 + 2)
+        return width >= required_width
+
+    def _summary_cost_width(self) -> int:
+        try:
+            width = self.query_one("#summary-cost-card").size.width
+        except Exception:
+            width = 0
+        if width <= 0:
+            width = max(0, self.size.width // 4)
+        return max(0, width)
 
 
 @dataclass(frozen=True)

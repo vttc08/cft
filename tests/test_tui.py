@@ -280,7 +280,10 @@ async def _assert_tui_renders_summary_and_distribution_table(tmp_path) -> None:
         assert app.query_one("#summary-upload-value").content == "-"
         assert app.query_one("#summary-requests-value").content == "-"
         assert app.query_one("#summary-cost-prefix").content == "$"
-        assert app.query_one("#summary-cost-value", Digits).value == "-"
+        assert app.query_one("#summary-cost-value-digits", Digits).value == "-"
+        assert not app.query_one("#summary-cost-value-digits", Digits).has_class("hidden")
+        assert app.query_one("#summary-cost-value-text", Static).content == "-"
+        assert app.query_one("#summary-cost-value-text", Static).has_class("hidden")
         assert round(app.query_one("#summary-download-card-bar", ProgressBar).progress, 2) == 0
         assert round(app.query_one("#summary-upload-card-bar", ProgressBar).progress, 2) == 0
         assert app.query_one("#summary-requests-card-bar", ProgressBar).progress == 0
@@ -396,6 +399,7 @@ async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_pa
         tmp_path,
         inventory_loader=fake_inventory,
         usage_loader=fake_usage,
+        billing_loader=fake_billing,
         now=lambda: datetime(2026, 5, 11, 9, 30),
     )
 
@@ -787,6 +791,45 @@ async def _assert_summary_progress_bars_resize_with_terminal_width(tmp_path) -> 
         assert download_bar.size.width == initial_bar_width
 
 
+def test_summary_cost_display_switches_with_terminal_width(tmp_path) -> None:
+    asyncio.run(_assert_summary_cost_display_switches_with_terminal_width(tmp_path))
+
+
+async def _assert_summary_cost_display_switches_with_terminal_width(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        billing_loader=fake_billing,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        cost_digits = app.query_one("#summary-cost-value-digits", Digits)
+        cost_text = app.query_one("#summary-cost-value-text", Static)
+
+        assert not cost_digits.has_class("hidden")
+        assert cost_digits.value == "8.42"
+        assert cost_text.content == "8.42"
+        assert cost_text.has_class("hidden")
+
+        await pilot.resize_terminal(60, 30)
+        await pilot.pause()
+
+        assert cost_digits.has_class("hidden")
+        assert cost_text.content == "8.42"
+        assert not cost_text.has_class("hidden")
+
+        await pilot.resize_terminal(100, 30)
+        await pilot.pause()
+
+        assert not cost_digits.has_class("hidden")
+        assert cost_text.has_class("hidden")
+
+
 def test_tui_formats_transfer_columns_with_shared_precision() -> None:
     spec = CftApp._resolve_transfer_format(
         (1_234_000_000, 99_890_000_000, 998_900_000_000),
@@ -853,7 +896,9 @@ export_name = "cloudfront-cur"
         assert app.query_one("#summary-download-value").content == "128.4 GB"
         assert app.query_one("#summary-upload-value").content == "6.8 GB"
         assert app.query_one("#summary-requests-value").content == "1.24M"
-        assert app.query_one("#summary-cost-value", Digits).value == "8.42"
+        assert app.query_one("#summary-cost-value-digits", Digits).value == "8.42"
+        assert not app.query_one("#summary-cost-value-digits", Digits).has_class("hidden")
+        assert app.query_one("#summary-cost-value-text", Static).has_class("hidden")
 
 
 def test_tui_cur_export_setup_flow_persists_selection(tmp_path) -> None:

@@ -157,7 +157,8 @@ Footer {
 }
 
 .summary-cost-prefix,
-.summary-cost-digits {
+.summary-cost-digits,
+.summary-cost-text {
     color: $primary;
     text-style: bold;
     height: auto;
@@ -169,6 +170,10 @@ Footer {
 }
 
 .summary-cost-digits {
+    width: auto;
+}
+
+.summary-cost-text {
     width: auto;
 }
 
