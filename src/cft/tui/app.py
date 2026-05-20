@@ -840,7 +840,7 @@ class CftApp(App[None]):
                                 "- CloudFront inventory comes from AWS access.\n"
                                 "- Current-month usage depends on CloudWatch metrics.\n"
                                 "- Billing totals depend on a linked AWS Data Export / CUR 2.0 delivery.\n"
-                                "- Upload visibility improves when CloudFront standard logs are linked.\n\n"
+                                "- Upload visibility can come from CloudWatch BytesUploaded or linked standard logs.\n\n"
                                 "### Helpful shortcuts\n\n"
                                 "- **r** refreshes data\n"
                                 "- **Enter** opens a distribution\n"
@@ -849,7 +849,8 @@ class CftApp(App[None]):
                                 "- **q** closes screens or quits\n\n"
                                 "### Setup hints\n\n"
                                 "- Link an AWS Data Export / CUR 2.0 bucket, prefix, and export name.\n"
-                                "- Configure distribution-specific logging if you want upload visibility.\n"
+                                "- Enable cloudfront_bytes_uploaded_metric in the profile TOML for POST uploads without logs.\n"
+                                "- Configure distribution-specific logging if you want upload visibility for WebSocket traffic.\n"
                                 "- Save profile-scoped overrides under `~/.cft/config/`.\n"
                             )
                     except Exception:
@@ -1013,6 +1014,10 @@ class CftApp(App[None]):
     ) -> dict[str, SourceMetrics]:
         if self._usage_loader_is_default:
             snapshot = self._usage_service.load(inventory, refresh=refresh)
+            if self.settings.aws.cloudfront_bytes_uploaded_metric:
+                self._last_usage_from_cache = snapshot.from_cache
+                return snapshot.usage_by_distribution
+
             s3_upload_snapshot = self._s3_logs_upload_service.load(inventory, refresh=refresh)
             upload_snapshot = self._logs_upload_service.load(inventory, refresh=refresh)
             self._last_usage_from_cache = (

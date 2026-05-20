@@ -63,7 +63,7 @@ aws cloudwatch get-metric-statistics  \
 ```
 
 - other metrics include `Requests, BytesDownloaded, BytesUploaded, TotalErrorRate, 4xxErrorRate, 5xxErrorRate`
-- for the TUI table, use `BytesDownloaded` and `Requests`; keep upload as a placeholder because `BytesUploaded` is not reliable enough for WebSocket traffic
+- for the TUI table, use `BytesDownloaded` and `Requests`; optionally enable `BytesUploaded` via a profile TOML flag for non-WebSocket POST traffic, and keep standard logs for WebSocket traffic
 - this example sets the time frame to monthly (same as AWS billing cycle)
 - `period` defined in second is how long each datapoints include, 86400 for daily, use 3000000 which can cover the entire month
 
@@ -83,7 +83,7 @@ Return type
 - best option is to set the `period` high for monthly statistics, unless granular stats are needed, otherwise all values must be summed
 - use hourly buckets (`period=3600`) for month-to-date queries so CloudWatch stays under the 1440 datapoint limit
 
-It's not possible to get `BytesUploaded` accurately for WebSocket endpoints, S3/CW logging is needed. This will be an optional feature and only if user configured standard
+It's not possible to get `BytesUploaded` accurately for WebSocket endpoints, so standard logging is still needed there. For non-WebSocket POST endpoints, `BytesUploaded` can be enabled as an opt-in profile-wide CloudWatch metric, so standard logging is not required for those distributions.
 
 As for free plan
 - standard logging is not available
@@ -220,6 +220,13 @@ Fields
 - `c-ip`, `c-port` - useful for analytics, client IP and port
 - `x-edge-location` - useful for analytics, which edge location
 - `x-edge-detailed-result-type` - maybe useful for analytics
+
+Profile TOML key:
+
+```toml
+[aws]
+cloudfront_bytes_uploaded_metric = true
+```
 
 CloudWatch (preferred for free tier)
 ~~For each log group, only 1 distribution can be linked. Could not delete this Delivery Destination as it is currently in use is a AWS bug.~~

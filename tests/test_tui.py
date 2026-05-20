@@ -2,8 +2,10 @@ import json
 from datetime import datetime
 import asyncio
 import threading
+from dataclasses import replace
 
 from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
+from cft.aws.cloudwatch import CloudFrontUsageSnapshot
 from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
 from cft.config.paths import AppPaths
 from cft.data_exports import BillingSnapshot
@@ -476,6 +478,32 @@ def test_tui_merges_cloudwatch_s3_and_cwl_upload_usage() -> None:
     assert merged["E123"].upload == 456
     assert merged["E123"].month_key == "2026-05"
     assert merged["E123"].source_key == "manual:log-group"
+
+
+def test_tui_uses_cloudwatch_upload_metric_when_enabled(tmp_path) -> None:
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+    app.settings = replace(app.settings, aws=replace(app.settings.aws, cloudfront_bytes_uploaded_metric=True))
+    app._usage_loader_is_default = True
+
+    snapshot = CloudFrontUsageSnapshot(
+        profile_name="dev",
+        from_cache=False,
+        usage_by_distribution={
+            "E123": SourceMetrics(download=1, upload=2, requests=3, month_key="2026-05")
+        },
+    )
+    app._usage_service.load = lambda inventory, refresh=False: snapshot  # type: ignore[assignment]
+    app._s3_logs_upload_service.load = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("S3 logs should be skipped"))  # type: ignore[assignment]
+    app._logs_upload_service.load = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("CloudWatch Logs should be skipped"))  # type: ignore[assignment]
+
+    usage = app._load_usage(fake_inventory(), refresh=False)
+
+    assert usage == snapshot.usage_by_distribution
+    assert app._last_usage_from_cache is False
 
 
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:

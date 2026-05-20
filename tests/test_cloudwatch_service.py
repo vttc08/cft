@@ -9,7 +9,7 @@ from botocore.stub import Stubber
 from cft.aws.cloudfront import CloudFrontInventory
 from cft.aws.cloudwatch import CloudFrontUsageService
 from cft.config.paths import AppPaths
-from cft.config.settings import AppSettings, CacheSettings
+from cft.config.settings import AppSettings, AwsSettings, CacheSettings
 from cft.models.cache import ProfileCacheState
 from cft.models.distribution import DistributionSummary
 
@@ -133,6 +133,48 @@ def test_cloudfront_usage_service_reads_and_writes_current_month_cache(tmp_path)
     assert cached.from_cache is True
     assert cached.usage_by_distribution["E123"].download == 1234
     assert cached.usage_by_distribution["E123"].requests == 4321
+
+
+def test_cloudfront_usage_service_can_use_bytes_uploaded_metric_without_logs(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    now = datetime(2026, 5, 13, 12, 0, tzinfo=timezone.utc)
+    settings = AppSettings(
+        aws=AwsSettings(cloudfront_bytes_uploaded_metric=True),
+        cache=CacheSettings(usage_ttl_seconds=3600),
+    )
+    client, stubber = cloudwatch_client()
+    expected_start = datetime(2026, 5, 1, 0, 0, tzinfo=timezone.utc)
+
+    for metric_name, total in (("BytesDownloaded", 1234.0), ("BytesUploaded", 987.0), ("Requests", 4321.0)):
+        stubber.add_response(
+            "get_metric_statistics",
+            {"Label": metric_name, "Datapoints": [{"Timestamp": now, "Sum": total}]},
+            {
+                "Namespace": "AWS/CloudFront",
+                "MetricName": metric_name,
+                "Dimensions": [
+                    {"Name": "DistributionId", "Value": "E123"},
+                    {"Name": "Region", "Value": "Global"},
+                ],
+                "StartTime": expected_start,
+                "EndTime": now,
+                "Period": 3600,
+                "Statistics": ["Sum"],
+            },
+        )
+
+    with stubber:
+        snapshot = CloudFrontUsageService(
+            profile_name="dev",
+            paths=paths,
+            settings=settings,
+            session_factory=lambda **_: StubSession(client),  # type: ignore[arg-type]
+            now=lambda: now,
+        ).load(fake_inventory())
+
+    assert snapshot.usage_by_distribution["E123"].download == 1234
+    assert snapshot.usage_by_distribution["E123"].upload == 987
+    assert snapshot.usage_by_distribution["E123"].requests == 4321
 
 
 def test_cloudfront_usage_service_refreshes_stale_same_month_cache_incrementally(tmp_path) -> None:

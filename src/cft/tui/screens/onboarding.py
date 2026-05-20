@@ -27,7 +27,7 @@ class FirstRunOnboardingScreen(ModalScreen[bool]):
                             "- CloudFront inventory comes from AWS access.\n"
                             "- Current-month usage depends on CloudWatch metrics.\n"
                             "- Billing totals depend on a linked AWS Data Export / CUR 2.0 delivery.\n"
-                            "- Upload visibility improves when CloudFront standard logs are linked.\n"
+                            "- Upload visibility can come from CloudWatch BytesUploaded or linked standard logs.\n"
                         ),
                         id="onboarding-warning",
                     )
@@ -46,7 +46,8 @@ class FirstRunOnboardingScreen(ModalScreen[bool]):
                         (
                             "Setup hints:\n"
                             "- Link an AWS Data Export / CUR 2.0 bucket, prefix, and export name.\n"
-                            "- Configure distribution-specific logging if you want upload visibility.\n"
+                            "- Enable cloudfront_bytes_uploaded_metric in the profile TOML for POST uploads without logs.\n"
+                            "- Configure distribution-specific logging if you want upload visibility for WebSocket traffic.\n"
                             "- Save profile-scoped overrides under ~/.cft/config/.\n"
                         ),
                         id="onboarding-setup",

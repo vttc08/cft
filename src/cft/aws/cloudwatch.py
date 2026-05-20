@@ -20,7 +20,7 @@ SessionFactory = Callable[..., boto3.Session]
 CLOUDFRONT_NAMESPACE = "AWS/CloudFront"
 CLOUDFRONT_DIMENSIONS = ("DistributionId", "Region")
 CLOUDFRONT_REGION = "Global"
-CLOUDFRONT_METRICS = ("BytesDownloaded", "Requests")
+CLOUDFRONT_METRICS = ("BytesDownloaded", "BytesUploaded", "Requests")
 CLOUDFRONT_PERIOD_SECONDS = 3600
 
 
@@ -72,6 +72,7 @@ class CloudFrontUsageService:
         now = self._coerce_utc(self.now())
         month_key = self._month_key(now)
         cache_policy = CachePolicy.from_seconds(settings.cache.usage_ttl_seconds)
+        use_bytes_uploaded = settings.aws.cloudfront_bytes_uploaded_metric
 
         usage_by_distribution: dict[str, SourceMetrics] = {}
         updated_distributions = dict(state.distributions)
@@ -85,7 +86,11 @@ class CloudFrontUsageService:
             )
             cached = existing.cw
             cache_is_current_month = cached.month_key == month_key
-            cache_has_complete_usage = cached.download is not None and cached.requests is not None
+            cache_has_complete_usage = (
+                cached.download is not None
+                and cached.requests is not None
+                and (not use_bytes_uploaded or cached.upload is not None)
+            )
             cache_is_fresh = (
                 not refresh
                 and cache_is_current_month
@@ -138,6 +143,7 @@ class CloudFrontUsageService:
                     cache_is_current_month=cache_is_current_month,
                     end_time=now,
                     month_key=month_key,
+                    use_bytes_uploaded=use_bytes_uploaded,
                 )
             except Exception:
                 if cached.download is not None or cached.requests is not None:
@@ -173,6 +179,7 @@ class CloudFrontUsageService:
         cache_is_current_month: bool,
         end_time: datetime,
         month_key: str,
+        use_bytes_uploaded: bool,
     ) -> SourceMetrics:
         download = self._refresh_metric(
             cloudwatch_client,
@@ -183,6 +190,17 @@ class CloudFrontUsageService:
             cache_is_current_month=cache_is_current_month,
             end_time=end_time,
         )
+        upload = cached.upload
+        if use_bytes_uploaded:
+            upload = self._refresh_metric(
+                cloudwatch_client,
+                distribution_id=distribution_id,
+                metric_name="BytesUploaded",
+                cached_value=cached.upload,
+                cached_last_updated=cached.last_updated,
+                cache_is_current_month=cache_is_current_month,
+                end_time=end_time,
+            )
         requests = self._refresh_metric(
             cloudwatch_client,
             distribution_id=distribution_id,
@@ -194,7 +212,7 @@ class CloudFrontUsageService:
         )
         return SourceMetrics(
             download=download,
-            upload=None,
+            upload=upload,
             requests=requests,
             last_updated=end_time,
             month_key=month_key,

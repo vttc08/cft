@@ -53,12 +53,14 @@ def test_load_app_settings_creates_human_editable_default_config(tmp_path) -> No
     assert paths.config_file.exists()
     assert settings.aws.cloudfront_region == "us-east-1"
     assert settings.aws.cwl_log_group is None
+    assert settings.aws.cloudfront_bytes_uploaded_metric is False
     assert settings.cache.distribution_ttl_seconds == 3600
     assert settings.cache.data_export_manifest_check_seconds == 14400
     config_text = paths.config_file.read_text(encoding="utf-8")
     assert "[aws]" in config_text
     assert "[cache]" in config_text
     assert "[data_export]" in config_text
+    assert 'cloudfront_bytes_uploaded_metric = false' in config_text
 
 
 def test_load_app_settings_merges_profile_specific_config(tmp_path) -> None:
@@ -73,6 +75,7 @@ prefix = "profile-prefix"
 export_name = "profile-export"
 [aws]
 cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+cloudfront_bytes_uploaded_metric = true
 """.strip()
         + "\n",
         encoding="utf-8",
@@ -84,6 +87,16 @@ cwl_log_group = "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
     assert settings.data_export.prefix == "profile-prefix"
     assert settings.data_export.export_name == "profile-export"
     assert settings.aws.cwl_log_group == "arn:aws:logs:us-east-1:123456789012:log-group:cloudfrontlogs"
+    assert settings.aws.cloudfront_bytes_uploaded_metric is True
+
+
+def test_load_app_settings_creates_profile_default_with_bytes_uploaded_flag(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+
+    load_app_settings(paths, profile_name="dev")
+
+    profile_text = paths.profile_config_file("dev").read_text(encoding="utf-8")
+    assert 'cloudfront_bytes_uploaded_metric = false' in profile_text
 
 
 def test_save_data_export_settings_writes_profile_file_and_round_trips(tmp_path) -> None:

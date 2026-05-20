@@ -7,7 +7,7 @@ This onboarding content is authored in Markdown so developers can update it easi
 - CloudFront inventory requires AWS credentials and permissions.
 - Current-month usage depends on CloudWatch metrics being available for the distribution.
 - Billing totals require a linked AWS Data Export / CUR 2.0 delivery to S3 (Parquet).
-- Upload visibility improves when CloudFront standard logs are enabled and delivered to S3 or CloudWatch Logs.
+- Upload visibility can come from CloudWatch `BytesUploaded` or from CloudFront standard logs.
 
 ## Helpful shortcuts
 
@@ -19,7 +19,8 @@ This onboarding content is authored in Markdown so developers can update it easi
 ## Quick setup hints
 
 - Link a CUR/Data Export S3 bucket, prefix, and export name in the configuration screen.
-- Configure distribution-specific logging to S3 or CloudWatch Logs for upload visibility.
+- Enable `cloudfront_bytes_uploaded_metric = true` in the profile TOML for POST uploads without logs.
+- Configure distribution-specific logging to S3 or CloudWatch Logs for upload visibility on WebSocket traffic.
 - Profile-scoped settings live under `~/.cft/config/` and per-profile cache under `~/.cft/cache/<profile>/state.json`.
 
 ---

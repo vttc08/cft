@@ -27,6 +27,7 @@ class AwsSettings:
     default_profile: str | None = None
     cloudfront_region: str = "us-east-1"
     cwl_log_group: str | None = None
+    cloudfront_bytes_uploaded_metric: bool = False
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,9 @@ class AppSettings:
                 default_profile=_none_if_blank(aws.get("default_profile")),
                 cloudfront_region=str(aws.get("cloudfront_region") or "us-east-1"),
                 cwl_log_group=_none_if_blank(aws.get("cwl_log_group")),
+                cloudfront_bytes_uploaded_metric=_bool_or_false(
+                    aws.get("cloudfront_bytes_uploaded_metric")
+                ),
             ),
             cache=CacheSettings(
                 distribution_ttl_seconds=_positive_int(
@@ -196,6 +200,7 @@ def default_config_text() -> str:
     aws["default_profile"] = ""
     aws["cloudfront_region"] = "us-east-1"
     aws["cwl_log_group"] = ""
+    aws["cloudfront_bytes_uploaded_metric"] = False
     document["aws"] = aws
 
     cache = tomlkit.table()
@@ -225,6 +230,7 @@ def default_profile_config_text() -> str:
     aws.add(tomlkit.comment("Optional profile name override. Leave blank to use the CLI/session profile."))
     aws["default_profile"] = ""
     aws["cwl_log_group"] = ""
+    aws["cloudfront_bytes_uploaded_metric"] = False
     document["aws"] = aws
 
     data_export = tomlkit.table()
@@ -242,6 +248,19 @@ def _none_if_blank(value: object) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _bool_or_false(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    text = str(value).strip().casefold()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off", ""}:
+        return False
+    return bool(value)
 
 
 def _positive_int(value: object, default: int) -> int:
