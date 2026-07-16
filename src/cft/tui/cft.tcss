@@ -66,6 +66,20 @@ Footer {
     width: 100%;
     text-align: center;
     color: $text-muted;
+    height: auto;
+    margin-top: 1;
+}
+
+#loading-help {
+    width: 100%;
+    height: auto;
+    text-align: center;
+    color: $foreground;
+    margin-top: 1;
+}
+
+#loading-retry {
+    width: auto;
     margin-top: 1;
 }
 

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import replace
 from datetime import datetime
 import re
 from typing import Any, Callable
@@ -13,41 +13,21 @@ from cft.cache.policies import (
     parse_utc_datetime,
     utc_now,
 )
-from cft.cache.store import JsonFileStore
+from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import (
-    DistributionCacheRecord,
     ProfileCacheState,
     StandardLogDeliveryRecord,
     normalize_distribution_type,
 )
 from cft.models.distribution import DistributionSummary, normalize_distribution
+from cft.models.inventory import AccountIdentity, CloudFrontInventory
 from cft.startup_trace import StartupTrace
 
 STANDARD_LOG_SOURCE_RE = re.compile(r"^CreatedByCloudFront-(?P<distribution_id>[A-Za-z0-9]+)-")
 
 SessionFactory = Callable[..., boto3.Session]
-
-
-@dataclass(frozen=True)
-class AccountIdentity:
-    account_id: str
-    arn: str
-    user_id: str
-
-
-@dataclass(frozen=True)
-class CloudFrontInventory:
-    profile_name: str
-    identity: AccountIdentity | None
-    distributions: tuple[DistributionSummary, ...]
-    distribution_types: dict[str, str] = field(default_factory=dict)
-    standard_log_deliveries: dict[str, tuple[StandardLogDeliveryRecord, ...]] = field(
-        default_factory=dict
-    )
-    cache_last_updated: datetime | None = None
-    from_cache: bool = False
 
 
 class CloudFrontInventoryService:
@@ -63,6 +43,7 @@ class CloudFrontInventoryService:
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
         trace: StartupTrace | None = None,
+        state_repository: ProfileStateRepository | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -71,6 +52,7 @@ class CloudFrontInventoryService:
         self.session_factory = session_factory
         self.now = now
         self.trace = trace
+        self.state_repository = state_repository or ProfileStateRepository(self.paths)
 
     def load(self, *, refresh: bool = False) -> CloudFrontInventory:
         requested_profile_name = settings_profile_name(self.profile_name)
@@ -80,15 +62,14 @@ class CloudFrontInventoryService:
         profile_name = requested_profile_name
         self.paths.ensure_profile_dirs(profile_name)
 
-        cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
-        cache_payload = cache_store.read()
-        state = ProfileCacheState.from_payload(cache_payload, profile_name=profile_name)
+        cache_exists = self.state_repository.exists(profile_name)
+        state = self.state_repository.load(profile_name)
         cache_last_updated = state.last_updated
         cache_policy = CachePolicy.from_seconds(settings.cache.distribution_ttl_seconds)
         now = self.now()
 
         if (
-            cache_payload is not None
+            cache_exists
             and not refresh
             and cache_policy.is_fresh(cache_last_updated, now=now)
         ):
@@ -115,9 +96,7 @@ class CloudFrontInventoryService:
         profile_name = session.profile_name or self.profile_name or "default"
         if profile_name != requested_profile_name:
             self.paths.ensure_profile_dirs(profile_name)
-            cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
-            cache_payload = cache_store.read()
-            state = ProfileCacheState.from_payload(cache_payload, profile_name=profile_name)
+            state = self.state_repository.load(profile_name)
 
         try:
             inventory = self._load_from_aws(session, profile_name, state, loaded_at=now)
@@ -147,7 +126,7 @@ class CloudFrontInventoryService:
             cache_last_updated=now,
             from_cache=False,
         )
-        cache_store.write_if_changed(refreshed_state.to_payload())
+        self.state_repository.save(refreshed_state)
         return refreshed_inventory
 
     def _load_from_aws(
@@ -266,7 +245,11 @@ class CloudFrontInventoryService:
 
     @staticmethod
     def _inventory_from_cache(state: ProfileCacheState | None) -> CloudFrontInventory | None:
-        if state is None:
+        if state is None or (
+            state.identity is None
+            and not state.distributions
+            and state.last_updated is None
+        ):
             return None
         distributions = tuple(
             _distribution_from_cache(value.to_payload())
@@ -290,24 +273,11 @@ class CloudFrontInventoryService:
         distribution_type: str,
     ) -> None:
         normalized_type = normalize_distribution_type(distribution_type)
-        self.paths.ensure_profile_dirs(profile_name)
-        cache_store = JsonFileStore(self.paths.profile_state_file(profile_name))
-        state = ProfileCacheState.from_payload(cache_store.read(), profile_name=profile_name)
-        existing = state.distributions.get(distribution_id)
-        if existing is None:
-            updated_distributions = {
-                **state.distributions,
-                distribution_id: DistributionCacheRecord(
-                    distribution_id=distribution_id,
-                    type=normalized_type,
-                ),
-            }
-        else:
-            updated_distributions = {
-                **state.distributions,
-                distribution_id: replace(existing, type=normalized_type),
-            }
-        cache_store.write(replace(state, distributions=updated_distributions).to_payload())
+        self.state_repository.set_distribution_type(
+            profile_name=profile_name,
+            distribution_id=distribution_id,
+            distribution_type=normalized_type,
+        )
 
 
 def _identity_to_cache(identity: AccountIdentity | None) -> dict[str, str] | None:

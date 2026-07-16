@@ -9,7 +9,7 @@ from cft.aws.cloudwatch_logs import CloudWatchLogGroupDiscoveryService
 from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
 from cft.config.paths import AppPaths
 from cft.config.settings import AppSettings, AwsSettings, CacheSettings
-from cft.models.cache import SourceMetrics, StandardLogDeliveryRecord
+from cft.models.cache import StandardLogDeliveryRecord
 from cft.models.distribution import DistributionSummary
 
 

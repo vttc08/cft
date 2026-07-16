@@ -7,8 +7,8 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Label, ListItem, ListView, Static
 
-from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
-from cft.config.settings import display_cwl_log_group
+from cft.models.configuration import CloudWatchLogGroupSummary
+from cft.tui.formatting import display_cwl_log_group
 
 
 @dataclass(frozen=True)

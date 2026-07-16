@@ -7,13 +7,13 @@ from typing import Callable
 import boto3
 
 from cft.cache.policies import CachePolicy, utc_now
-from cft.cache.store import JsonFileStore
+from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
-from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceMetrics
+from cft.models.cache import DistributionCacheRecord, SourceMetrics
 from cft.startup_trace import StartupTrace
 
-from .cloudfront import CloudFrontInventory
+from cft.models.inventory import CloudFrontInventory
 
 SessionFactory = Callable[..., boto3.Session]
 
@@ -44,6 +44,7 @@ class CloudFrontUsageService:
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
         trace: StartupTrace | None = None,
+        state_repository: ProfileStateRepository | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -52,6 +53,7 @@ class CloudFrontUsageService:
         self.session_factory = session_factory
         self.now = now
         self.trace = trace
+        self.state_repository = state_repository or ProfileStateRepository(self.paths)
 
     def load(
         self,
@@ -63,12 +65,7 @@ class CloudFrontUsageService:
             self.paths, profile_name=settings_profile_name(inventory.profile_name)
         )
         self.paths.ensure_profile_dirs(inventory.profile_name)
-        state_file = self.paths.profile_state_file(inventory.profile_name)
-        cache_store = JsonFileStore(state_file)
-        state = ProfileCacheState.from_payload(
-            cache_store.read(),
-            profile_name=inventory.profile_name,
-        )
+        state = self.state_repository.load(inventory.profile_name)
         now = self._coerce_utc(self.now())
         month_key = self._month_key(now)
         cache_policy = CachePolicy.from_seconds(settings.cache.usage_ttl_seconds)
@@ -163,7 +160,7 @@ class CloudFrontUsageService:
             profile_name=inventory.profile_name,
             distributions=updated_distributions,
         )
-        cache_store.write_if_changed(updated_state.to_payload())
+        self.state_repository.save(updated_state)
         return CloudFrontUsageSnapshot(
             profile_name=inventory.profile_name,
             usage_by_distribution=usage_by_distribution,

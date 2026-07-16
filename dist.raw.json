@@ -1,0 +1,490 @@
+{
+    "ETag": "E15KVG7JRDMGB1",
+    "DistributionConfig": {
+        "CallerReference": "1491acd2-829b-467e-bec8-b7347258cf59",
+        "Aliases": {
+            "Quantity": 0
+        },
+        "DefaultRootObject": "",
+        "Origins": {
+            "Quantity": 4,
+            "Items": [
+                {
+                    "Id": "vlc.langleyhome.mywire.org-mkizlvi8j0y",
+                    "DomainName": "vlc.langleyhome.mywire.org",
+                    "OriginPath": "",
+                    "CustomHeaders": {
+                        "Quantity": 0
+                    },
+                    "CustomOriginConfig": {
+                        "HTTPPort": 80,
+                        "HTTPSPort": 443,
+                        "OriginProtocolPolicy": "https-only",
+                        "OriginSslProtocols": {
+                            "Quantity": 1,
+                            "Items": [
+                                "TLSv1.2"
+                            ]
+                        },
+                        "OriginReadTimeout": 30,
+                        "OriginKeepaliveTimeout": 5,
+                        "IpAddressType": "ipv4"
+                    },
+                    "ConnectionAttempts": 3,
+                    "ConnectionTimeout": 10,
+                    "OriginShield": {
+                        "Enabled": false
+                    },
+                    "OriginAccessControlId": ""
+                },
+                {
+                    "Id": "subscriptionlink.s3.us-east-1.amazonaws.com",
+                    "DomainName": "subscriptionlink.s3.us-east-1.amazonaws.com",
+                    "OriginPath": "",
+                    "CustomHeaders": {
+                        "Quantity": 0
+                    },
+                    "S3OriginConfig": {
+                        "OriginAccessIdentity": "origin-access-identity/cloudfront/E2W63UOULAQIJN",
+                        "OriginReadTimeout": 30
+                    },
+                    "ConnectionAttempts": 3,
+                    "ConnectionTimeout": 10,
+                    "OriginShield": {
+                        "Enabled": false
+                    },
+                    "OriginAccessControlId": ""
+                },
+                {
+                    "Id": "freetier.giize.com",
+                    "DomainName": "freetier.giize.com",
+                    "OriginPath": "",
+                    "CustomHeaders": {
+                        "Quantity": 0
+                    },
+                    "CustomOriginConfig": {
+                        "HTTPPort": 8080,
+                        "HTTPSPort": 443,
+                        "OriginProtocolPolicy": "http-only",
+                        "OriginSslProtocols": {
+                            "Quantity": 4,
+                            "Items": [
+                                "SSLv3",
+                                "TLSv1",
+                                "TLSv1.1",
+                                "TLSv1.2"
+                            ]
+                        },
+                        "OriginReadTimeout": 30,
+                        "OriginKeepaliveTimeout": 5,
+                        "IpAddressType": "ipv4"
+                    },
+                    "ConnectionAttempts": 3,
+                    "ConnectionTimeout": 10,
+                    "OriginShield": {
+                        "Enabled": false
+                    },
+                    "OriginAccessControlId": ""
+                },
+                {
+                    "Id": "Python",
+                    "DomainName": "python.seattlewa.mywire.org",
+                    "OriginPath": "",
+                    "CustomHeaders": {
+                        "Quantity": 0
+                    },
+                    "CustomOriginConfig": {
+                        "HTTPPort": 80,
+                        "HTTPSPort": 443,
+                        "OriginProtocolPolicy": "https-only",
+                        "OriginSslProtocols": {
+                            "Quantity": 1,
+                            "Items": [
+                                "TLSv1.2"
+                            ]
+                        },
+                        "OriginReadTimeout": 30,
+                        "OriginKeepaliveTimeout": 5,
+                        "IpAddressType": "ipv4"
+                    },
+                    "ConnectionAttempts": 3,
+                    "ConnectionTimeout": 10,
+                    "OriginShield": {
+                        "Enabled": false
+                    },
+                    "OriginAccessControlId": ""
+                }
+            ]
+        },
+        "OriginGroups": {
+            "Quantity": 0
+        },
+        "DefaultCacheBehavior": {
+            "TargetOriginId": "subscriptionlink.s3.us-east-1.amazonaws.com",
+            "TrustedSigners": {
+                "Enabled": false,
+                "Quantity": 0
+            },
+            "TrustedKeyGroups": {
+                "Enabled": false,
+                "Quantity": 0
+            },
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "AllowedMethods": {
+                "Quantity": 7,
+                "Items": [
+                    "HEAD",
+                    "DELETE",
+                    "POST",
+                    "GET",
+                    "OPTIONS",
+                    "PUT",
+                    "PATCH"
+                ],
+                "CachedMethods": {
+                    "Quantity": 2,
+                    "Items": [
+                        "HEAD",
+                        "GET"
+                    ]
+                }
+            },
+            "SmoothStreaming": false,
+            "Compress": true,
+            "LambdaFunctionAssociations": {
+                "Quantity": 0
+            },
+            "FunctionAssociations": {
+                "Quantity": 1,
+                "Items": [
+                    {
+                        "FunctionARN": "arn:aws:cloudfront::301027534524:function/redirect",
+                        "EventType": "viewer-request"
+                    }
+                ]
+            },
+            "FieldLevelEncryptionId": "",
+            "GrpcConfig": {
+                "Enabled": true
+            },
+            "ForwardedValues": {
+                "QueryString": false,
+                "Cookies": {
+                    "Forward": "none"
+                },
+                "Headers": {
+                    "Quantity": 0
+                },
+                "QueryStringCacheKeys": {
+                    "Quantity": 0
+                }
+            },
+            "MinTTL": 0,
+            "DefaultTTL": 86400,
+            "MaxTTL": 31536000
+        },
+        "CacheBehaviors": {
+            "Quantity": 5,
+            "Items": [
+                {
+                    "PathPattern": "/nodejs/w*",
+                    "TargetOriginId": "freetier.giize.com",
+                    "TrustedSigners": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "TrustedKeyGroups": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "ViewerProtocolPolicy": "redirect-to-https",
+                    "AllowedMethods": {
+                        "Quantity": 7,
+                        "Items": [
+                            "HEAD",
+                            "DELETE",
+                            "POST",
+                            "GET",
+                            "OPTIONS",
+                            "PUT",
+                            "PATCH"
+                        ],
+                        "CachedMethods": {
+                            "Quantity": 2,
+                            "Items": [
+                                "HEAD",
+                                "GET"
+                            ]
+                        }
+                    },
+                    "SmoothStreaming": false,
+                    "Compress": false,
+                    "LambdaFunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FieldLevelEncryptionId": "",
+                    "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                    "OriginRequestPolicyId": "216adef6-5c7f-47e4-b989-5492eafa07d3",
+                    "GrpcConfig": {
+                        "Enabled": false
+                    }
+                },
+                {
+                    "PathPattern": "/nodejs/*",
+                    "TargetOriginId": "freetier.giize.com",
+                    "TrustedSigners": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "TrustedKeyGroups": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "ViewerProtocolPolicy": "redirect-to-https",
+                    "AllowedMethods": {
+                        "Quantity": 7,
+                        "Items": [
+                            "HEAD",
+                            "DELETE",
+                            "POST",
+                            "GET",
+                            "OPTIONS",
+                            "PUT",
+                            "PATCH"
+                        ],
+                        "CachedMethods": {
+                            "Quantity": 2,
+                            "Items": [
+                                "HEAD",
+                                "GET"
+                            ]
+                        }
+                    },
+                    "SmoothStreaming": false,
+                    "Compress": true,
+                    "LambdaFunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FieldLevelEncryptionId": "",
+                    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+                    "GrpcConfig": {
+                        "Enabled": false
+                    }
+                },
+                {
+                    "PathPattern": "/starlight/*",
+                    "TargetOriginId": "subscriptionlink.s3.us-east-1.amazonaws.com",
+                    "TrustedSigners": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "TrustedKeyGroups": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "ViewerProtocolPolicy": "redirect-to-https",
+                    "AllowedMethods": {
+                        "Quantity": 2,
+                        "Items": [
+                            "HEAD",
+                            "GET"
+                        ],
+                        "CachedMethods": {
+                            "Quantity": 2,
+                            "Items": [
+                                "HEAD",
+                                "GET"
+                            ]
+                        }
+                    },
+                    "SmoothStreaming": false,
+                    "Compress": true,
+                    "LambdaFunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FunctionAssociations": {
+                        "Quantity": 1,
+                        "Items": [
+                            {
+                                "FunctionARN": "arn:aws:cloudfront::301027534524:function/s3",
+                                "EventType": "viewer-request"
+                            }
+                        ]
+                    },
+                    "FieldLevelEncryptionId": "",
+                    "CachePolicyId": "4135ea2d-6df8-44a3-9df3-4b5a84be39ad",
+                    "GrpcConfig": {
+                        "Enabled": false
+                    }
+                },
+                {
+                    "PathPattern": "/python/*",
+                    "TargetOriginId": "Python",
+                    "TrustedSigners": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "TrustedKeyGroups": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "ViewerProtocolPolicy": "redirect-to-https",
+                    "AllowedMethods": {
+                        "Quantity": 7,
+                        "Items": [
+                            "HEAD",
+                            "DELETE",
+                            "POST",
+                            "GET",
+                            "OPTIONS",
+                            "PUT",
+                            "PATCH"
+                        ],
+                        "CachedMethods": {
+                            "Quantity": 2,
+                            "Items": [
+                                "HEAD",
+                                "GET"
+                            ]
+                        }
+                    },
+                    "SmoothStreaming": false,
+                    "Compress": true,
+                    "LambdaFunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FieldLevelEncryptionId": "",
+                    "GrpcConfig": {
+                        "Enabled": false
+                    },
+                    "ForwardedValues": {
+                        "QueryString": false,
+                        "Cookies": {
+                            "Forward": "none"
+                        },
+                        "Headers": {
+                            "Quantity": 0
+                        },
+                        "QueryStringCacheKeys": {
+                            "Quantity": 0
+                        }
+                    },
+                    "MinTTL": 0,
+                    "DefaultTTL": 86400,
+                    "MaxTTL": 31536000
+                },
+                {
+                    "PathPattern": "/YNm7jLM9s85",
+                    "TargetOriginId": "vlc.langleyhome.mywire.org-mkizlvi8j0y",
+                    "TrustedSigners": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "TrustedKeyGroups": {
+                        "Enabled": false,
+                        "Quantity": 0
+                    },
+                    "ViewerProtocolPolicy": "https-only",
+                    "AllowedMethods": {
+                        "Quantity": 7,
+                        "Items": [
+                            "HEAD",
+                            "DELETE",
+                            "POST",
+                            "GET",
+                            "OPTIONS",
+                            "PUT",
+                            "PATCH"
+                        ],
+                        "CachedMethods": {
+                            "Quantity": 2,
+                            "Items": [
+                                "HEAD",
+                                "GET"
+                            ]
+                        }
+                    },
+                    "SmoothStreaming": false,
+                    "Compress": true,
+                    "LambdaFunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FunctionAssociations": {
+                        "Quantity": 0
+                    },
+                    "FieldLevelEncryptionId": "",
+                    "GrpcConfig": {
+                        "Enabled": false
+                    },
+                    "ForwardedValues": {
+                        "QueryString": false,
+                        "Cookies": {
+                            "Forward": "none"
+                        },
+                        "Headers": {
+                            "Quantity": 0
+                        },
+                        "QueryStringCacheKeys": {
+                            "Quantity": 0
+                        }
+                    },
+                    "MinTTL": 0,
+                    "DefaultTTL": 86400,
+                    "MaxTTL": 31536000
+                }
+            ]
+        },
+        "CustomErrorResponses": {
+            "Quantity": 2,
+            "Items": [
+                {
+                    "ErrorCode": 403,
+                    "ResponsePagePath": "/404.html",
+                    "ResponseCode": "404",
+                    "ErrorCachingMinTTL": 10
+                },
+                {
+                    "ErrorCode": 404,
+                    "ResponsePagePath": "/404.html",
+                    "ResponseCode": "404",
+                    "ErrorCachingMinTTL": 10
+                }
+            ]
+        },
+        "Comment": "VLESS PAYG",
+        "Logging": {
+            "Enabled": false,
+            "IncludeCookies": false,
+            "Bucket": "",
+            "Prefix": ""
+        },
+        "PriceClass": "PriceClass_All",
+        "Enabled": true,
+        "ViewerCertificate": {
+            "CloudFrontDefaultCertificate": true,
+            "SSLSupportMethod": "vip",
+            "MinimumProtocolVersion": "TLSv1",
+            "CertificateSource": "cloudfront"
+        },
+        "Restrictions": {
+            "GeoRestriction": {
+                "RestrictionType": "none",
+                "Quantity": 0
+            }
+        },
+        "WebACLId": "",
+        "HttpVersion": "http2",
+        "IsIPV6Enabled": true,
+        "ContinuousDeploymentPolicyId": "",
+        "Staging": false
+    }
+}

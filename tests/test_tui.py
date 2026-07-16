@@ -4,13 +4,29 @@ import asyncio
 import threading
 from dataclasses import replace
 
-from cft.aws.cloudfront import AccountIdentity, CloudFrontInventory
-from cft.aws.cloudwatch import CloudFrontUsageSnapshot
-from cft.aws.cloudwatch_logs import CloudWatchLogGroupSummary
+from botocore.exceptions import NoCredentialsError
+
+from cft.application import DashboardLoadError
+from cft.application.models import DashboardLoadResult, DashboardSnapshot
+from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths
-from cft.data_exports import BillingSnapshot
+from cft.config.settings import (
+    load_app_settings,
+    save_cwl_log_group_settings,
+    save_data_export_settings,
+)
+from cft.models.billing import BillingSnapshot
 from cft.models.cache import ProfileCacheState, SourceMetrics, StandardLogDeliveryRecord
+from cft.models.configuration import (
+    CloudWatchLogGroupSummary,
+    CloudWatchLogsConfiguration,
+    ConfigurationSnapshot,
+    DataExportConfiguration,
+    SaveCloudWatchLogs,
+    SaveDataExport,
+)
 from cft.models.distribution import DistributionSummary
+from cft.models.inventory import AccountIdentity, CloudFrontInventory
 from cft.tui.app import CFT_AWS_THEME, CftApp, CurExportStatus, SummaryPreviewData, SummaryWidgetShowcase
 from cft.tui.screens.config_menu import ConfigurationMenuScreen
 from cft.tui.screens.cwl_logs_setup import CwlLogGroupSetupScreen
@@ -153,6 +169,133 @@ def fake_log_groups() -> tuple[CloudWatchLogGroupSummary, ...]:
     )
 
 
+class FakeApplication:
+    def __init__(
+        self,
+        *,
+        paths: AppPaths,
+        profile_name: str | None = None,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        billing_loader=None,
+        bucket_loader=None,
+        log_group_loader=None,
+    ) -> None:
+        self.paths = paths
+        self.profile_name = profile_name or "default"
+        self.inventory_loader = inventory_loader
+        self.usage_loader = usage_loader
+        self.billing_loader = billing_loader
+        self.bucket_loader = bucket_loader or (lambda: ())
+        self.log_group_loader = log_group_loader or (lambda: ())
+        self.repository = ProfileStateRepository(paths)
+        self.latest_snapshot: DashboardSnapshot | None = None
+
+    def load_dashboard(self, *, refresh: bool = False) -> DashboardLoadResult:
+        inventory = self.inventory_loader()
+        usage = self.usage_loader(inventory)
+        billing = (
+            self.billing_loader()
+            if self.billing_loader is not None
+            else BillingSnapshot(
+                profile_name=inventory.profile_name,
+                configured=False,
+                message="Setup required",
+            )
+        )
+        snapshot = DashboardSnapshot(
+            inventory=inventory,
+            usage_by_distribution=usage,
+            billing=billing,
+            configuration=self.get_configuration(),
+            onboarding_seen=self.has_seen_onboarding(),
+        )
+        self.latest_snapshot = snapshot
+        return DashboardLoadResult(
+            snapshot=snapshot,
+            inventory_from_cache=False,
+            usage_from_cache=False,
+            billing_from_cache=False,
+        )
+
+    def write_startup_trace(self) -> None:
+        return None
+
+    def get_configuration(self) -> ConfigurationSnapshot:
+        settings = load_app_settings(
+            self.paths,
+            profile_name=self.profile_name,
+            create=False,
+        )
+        return ConfigurationSnapshot(
+            profile_name=self.profile_name,
+            data_export=DataExportConfiguration(
+                bucket=settings.data_export.bucket,
+                prefix=settings.data_export.prefix,
+                export_name=settings.data_export.export_name,
+            ),
+            cloudwatch_logs=CloudWatchLogsConfiguration(
+                log_group=settings.aws.cwl_log_group
+            ),
+        )
+
+    def discover_s3_buckets(self) -> tuple[str, ...]:
+        return self.bucket_loader()
+
+    def discover_cwl_log_groups(self) -> tuple[CloudWatchLogGroupSummary, ...]:
+        return self.log_group_loader()
+
+    def save_data_export(self, command: SaveDataExport) -> ConfigurationSnapshot:
+        save_data_export_settings(
+            paths=self.paths,
+            profile_name=self.profile_name,
+            bucket=command.bucket,
+            prefix=command.prefix,
+            export_name=command.export_name,
+        )
+        return self.get_configuration()
+
+    def save_cwl_log_group(self, command: SaveCloudWatchLogs) -> ConfigurationSnapshot:
+        save_cwl_log_group_settings(
+            paths=self.paths,
+            profile_name=self.profile_name,
+            log_group=command.log_group,
+        )
+        return self.get_configuration()
+
+    def set_distribution_type(
+        self,
+        distribution_id: str,
+        distribution_type: str,
+    ) -> DashboardSnapshot | None:
+        self.repository.set_distribution_type(
+            profile_name=(
+                self.latest_snapshot.inventory.profile_name
+                if self.latest_snapshot is not None
+                else self.profile_name
+            ),
+            distribution_id=distribution_id,
+            distribution_type=distribution_type,
+        )
+        if self.latest_snapshot is None:
+            return None
+        inventory = replace(
+            self.latest_snapshot.inventory,
+            distribution_types={
+                **self.latest_snapshot.inventory.distribution_types,
+                distribution_id: distribution_type,
+            },
+        )
+        self.latest_snapshot = replace(self.latest_snapshot, inventory=inventory)
+        return self.latest_snapshot
+
+    def has_seen_onboarding(self) -> bool:
+        return self.repository.load(self.profile_name).onboarding_seen
+
+    def mark_onboarding_seen(self) -> None:
+        self.repository.mark_onboarding_seen(self.profile_name)
+
+
 async def wait_for_dashboard_ready(app: CftApp, pilot, *, attempts: int = 20) -> None:
     for _ in range(attempts):
         dashboard = app.query_one("#dashboard-scroll")
@@ -197,7 +340,15 @@ def make_app(
             ),
             encoding="utf-8",
         )
-    return CftApp(paths=paths, profile_name=profile_name, **kwargs)
+    now = kwargs.pop("now", datetime.now)
+    application = FakeApplication(
+        paths=paths,
+        profile_name=profile_name,
+        **kwargs,
+    )
+    app = CftApp(application=application, now=now)
+    app.paths = paths
+    return app
 
 
 def test_tui_shows_onboarding_once_and_persists_dismissal(tmp_path) -> None:
@@ -464,48 +615,6 @@ async def _assert_tui_updates_active_distribution_preview_with_arrow_keys(tmp_pa
         )
 
 
-def test_tui_merges_cloudwatch_s3_and_cwl_upload_usage() -> None:
-    merged = CftApp._merge_usage_snapshots(
-        CftApp._merge_usage_snapshots(
-            {"E123": SourceMetrics(download=123, requests=456, month_key="2026-05")},
-            {"E123": SourceMetrics(upload=789, month_key="2026-05", source_key="s3:bucket")},
-        ),
-        {"E123": SourceMetrics(upload=456, month_key="2026-05", source_key="manual:log-group")},
-    )
-
-    assert merged["E123"].download == 123
-    assert merged["E123"].requests == 456
-    assert merged["E123"].upload == 456
-    assert merged["E123"].month_key == "2026-05"
-    assert merged["E123"].source_key == "manual:log-group"
-
-
-def test_tui_uses_cloudwatch_upload_metric_when_enabled(tmp_path) -> None:
-    app = make_app(
-        tmp_path,
-        inventory_loader=fake_inventory,
-        now=lambda: datetime(2026, 5, 11, 9, 30),
-    )
-    app.settings = replace(app.settings, aws=replace(app.settings.aws, cloudfront_bytes_uploaded_metric=True))
-    app._usage_loader_is_default = True
-
-    snapshot = CloudFrontUsageSnapshot(
-        profile_name="dev",
-        from_cache=False,
-        usage_by_distribution={
-            "E123": SourceMetrics(download=1, upload=2, requests=3, month_key="2026-05")
-        },
-    )
-    app._usage_service.load = lambda inventory, refresh=False: snapshot  # type: ignore[assignment]
-    app._s3_logs_upload_service.load = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("S3 logs should be skipped"))  # type: ignore[assignment]
-    app._logs_upload_service.load = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("CloudWatch Logs should be skipped"))  # type: ignore[assignment]
-
-    usage = app._load_usage(fake_inventory(), refresh=False)
-
-    assert usage == snapshot.usage_by_distribution
-    assert app._last_usage_from_cache is False
-
-
 def test_tui_updates_distribution_plan_type_and_caches_it(tmp_path) -> None:
     asyncio.run(_assert_tui_updates_distribution_plan_type_and_caches_it(tmp_path))
 
@@ -585,6 +694,56 @@ async def _assert_tui_shows_loading_panel_while_refreshing_data(tmp_path) -> Non
             if loading_panel.has_class("hidden") and not dashboard.has_class("hidden"):
                 break
 
+        assert loading_panel.has_class("hidden")
+        assert not dashboard.has_class("hidden")
+        assert app.query_one("#distributions").row_count == 3
+
+
+def test_tui_keeps_credential_error_visible_and_retries_without_restart(tmp_path) -> None:
+    asyncio.run(_assert_tui_keeps_credential_error_visible_and_retries_without_restart(tmp_path))
+
+
+async def _assert_tui_keeps_credential_error_visible_and_retries_without_restart(
+    tmp_path,
+) -> None:
+    attempts = {"count": 0}
+
+    def inventory_loader() -> CloudFrontInventory:
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise DashboardLoadError("inventory", NoCredentialsError())
+        return fake_inventory()
+
+    app = make_app(
+        tmp_path,
+        profile_name="dev",
+        inventory_loader=inventory_loader,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(80, 24)) as pilot:
+        loading_panel = app.query_one("#loading-panel")
+        dashboard = app.query_one("#dashboard-scroll")
+        title = app.query_one("#loading-title", Static)
+
+        for _ in range(20):
+            await pilot.pause()
+            if title.content == "AWS credentials not found":
+                break
+
+        assert not loading_panel.has_class("hidden")
+        assert dashboard.has_class("hidden")
+        assert title.content == "AWS credentials not found"
+        assert "AWS profile 'dev'" in app.query_one("#loading-status", Static).content
+        assert "~/.aws/credentials" in app.query_one("#loading-status", Static).content
+        assert "press r" in app.query_one("#loading-help", Static).content
+        assert not app.query_one("#loading-retry", Button).has_class("hidden")
+
+        await pilot.press("r")
+        await wait_for_dashboard_ready(app, pilot)
+
+        assert attempts["count"] == 2
         assert loading_panel.has_class("hidden")
         assert not dashboard.has_class("hidden")
         assert app.query_one("#distributions").row_count == 3

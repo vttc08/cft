@@ -7,7 +7,7 @@ from typing import Annotated
 import typer
 
 from cft.config.paths import get_app_paths
-from cft.tui.app import profile_startup, run_tui
+from cft.bootstrap import profile_startup, run_tui
 
 app = typer.Typer(
     add_completion=False,

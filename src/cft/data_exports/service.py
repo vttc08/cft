@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
@@ -13,7 +13,7 @@ import duckdb
 from botocore.exceptions import ClientError
 
 from cft.cache.policies import CachePolicy, utc_now
-from cft.cache.store import JsonFileStore
+from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import (
     AppSettings,
@@ -21,7 +21,8 @@ from cft.config.settings import (
     normalize_data_export_prefix,
     settings_profile_name,
 )
-from cft.models.cache import ProfileCacheState, ProfileSummaryCache
+from cft.models.cache import ProfileSummaryCache
+from cft.models.billing import BillingSnapshot
 from cft.startup_trace import StartupTrace
 
 SessionFactory = Callable[..., boto3.Session]
@@ -68,21 +69,6 @@ WHERE line_item_line_item_type = 'Usage'
 """
 
 
-@dataclass(frozen=True)
-class BillingSnapshot:
-    profile_name: str
-    configured: bool
-    download_bytes: int | None = None
-    upload_bytes: int | None = None
-    requests: int | None = None
-    cost: float | None = None
-    last_updated: datetime | None = None
-    data_start: datetime | None = None
-    data_end: datetime | None = None
-    from_cache: bool = False
-    message: str | None = None
-
-
 class CurDataExportService:
     """Read-through CUR/Data Export sync backed by S3 and DuckDB."""
 
@@ -95,6 +81,7 @@ class CurDataExportService:
         session_factory: SessionFactory = boto3.Session,
         now: Callable[[], datetime] = utc_now,
         trace: StartupTrace | None = None,
+        state_repository: ProfileStateRepository | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.paths = paths or get_app_paths()
@@ -102,6 +89,7 @@ class CurDataExportService:
         self.session_factory = session_factory
         self.now = now
         self.trace = trace
+        self.state_repository = state_repository or ProfileStateRepository(self.paths)
 
     def load(self, *, refresh: bool = False) -> BillingSnapshot:
         settings = self.settings or load_app_settings(
@@ -121,11 +109,7 @@ class CurDataExportService:
         profile_name = self.profile_name or "default"
         self.paths.ensure_profile_dirs(profile_name)
 
-        state_store = JsonFileStore(self.paths.billing_cache_file(profile_name))
-        state = ProfileCacheState.from_payload(
-            state_store.read(),
-            profile_name=profile_name,
-        )
+        state = self.state_repository.load(profile_name)
         now = self._coerce_utc(self.now())
         month_key = now.strftime("%Y-%m")
         manifest_key = self._manifest_key(
@@ -182,11 +166,7 @@ class CurDataExportService:
         profile_name = session.profile_name or self.profile_name or "default"
         if profile_name != (self.profile_name or "default"):
             self.paths.ensure_profile_dirs(profile_name)
-            state_store = JsonFileStore(self.paths.billing_cache_file(profile_name))
-            state = ProfileCacheState.from_payload(
-                state_store.read(),
-                profile_name=profile_name,
-            )
+            state = self.state_repository.load(profile_name)
             cached_profile = state.profile
 
         s3_client = session.client("s3")
@@ -274,7 +254,7 @@ class CurDataExportService:
             requests=summary.requests,
             cost=summary.cost,
         )
-        state_store.write_if_changed(replace(state, profile=updated_profile).to_payload())
+        self.state_repository.save(replace(state, profile=updated_profile))
         return BillingSnapshot(
             profile_name=profile_name,
             configured=True,

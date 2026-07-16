@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 import json
 
+import pytest
+
 from cft.aws.cloudfront import CloudFrontInventoryService
 from cft.config.paths import AppPaths
 from cft.config.settings import AppSettings, AwsSettings, CacheSettings
@@ -351,6 +353,27 @@ def test_cloudfront_inventory_service_falls_back_to_stale_cache_on_aws_error(tmp
 
     assert cached.from_cache is True
     assert cached.distributions[0].distribution_id == "E123"
+
+
+def test_cloudfront_inventory_service_does_not_mask_aws_error_with_empty_state(
+    tmp_path,
+) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+
+    class FailingSession:
+        profile_name = "dev"
+
+        def client(self, service_name: str) -> object:
+            raise RuntimeError(f"{service_name} unavailable")
+
+    service = CloudFrontInventoryService(
+        profile_name="dev",
+        paths=paths,
+        session_factory=lambda **_: FailingSession(),  # type: ignore[arg-type]
+    )
+
+    with pytest.raises(RuntimeError, match="sts unavailable"):
+        service.load(refresh=True)
 
 
 def test_cloudfront_inventory_service_discovers_and_caches_standard_log_deliveries(

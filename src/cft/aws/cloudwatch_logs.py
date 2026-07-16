@@ -8,17 +8,16 @@ from typing import Callable
 import boto3
 
 from cft.cache.policies import CachePolicy, utc_now
-from cft.cache.store import JsonFileStore
+from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import (
     DistributionCacheRecord,
-    ProfileCacheState,
     SourceMetrics,
 )
+from cft.models.configuration import CloudWatchLogGroupSummary
+from cft.models.inventory import CloudFrontInventory
 from cft.startup_trace import StartupTrace
-
-from .cloudfront import CloudFrontInventory
 
 SessionFactory = Callable[..., boto3.Session]
 
@@ -26,13 +25,6 @@ LOGS_INSIGHTS_QUERY = "stats sum(`cs-bytes`) as uploads by DistributionId"
 MAX_LOG_GROUP_IDENTIFIERS_PER_QUERY = 50
 DEFAULT_QUERY_POLL_INTERVAL_SECONDS = 0.5
 DEFAULT_QUERY_TIMEOUT_SECONDS = 60.0
-
-
-@dataclass(frozen=True)
-class CloudWatchLogGroupSummary:
-    log_group_name: str
-    log_group_arn: str | None = None
-    log_group_class: str | None = None
 
 
 @dataclass(frozen=True)
@@ -116,6 +108,7 @@ class CloudFrontLogsUploadService:
         query_poll_interval_seconds: float = DEFAULT_QUERY_POLL_INTERVAL_SECONDS,
         query_timeout_seconds: float = DEFAULT_QUERY_TIMEOUT_SECONDS,
         trace: StartupTrace | None = None,
+        state_repository: ProfileStateRepository | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -126,6 +119,7 @@ class CloudFrontLogsUploadService:
         self.query_poll_interval_seconds = max(0.0, query_poll_interval_seconds)
         self.query_timeout_seconds = max(1.0, query_timeout_seconds)
         self.trace = trace
+        self.state_repository = state_repository or ProfileStateRepository(self.paths)
 
     def load(
         self,
@@ -137,12 +131,7 @@ class CloudFrontLogsUploadService:
             self.paths, profile_name=settings_profile_name(inventory.profile_name)
         )
         self.paths.ensure_profile_dirs(inventory.profile_name)
-        state_file = self.paths.profile_state_file(inventory.profile_name)
-        cache_store = JsonFileStore(state_file)
-        state = ProfileCacheState.from_payload(
-            cache_store.read(),
-            profile_name=inventory.profile_name,
-        )
+        state = self.state_repository.load(inventory.profile_name)
         now = self._coerce_utc(self.now())
         month_key = self._month_key(now)
         cache_policy = CachePolicy.from_seconds(settings.cache.logs_upload_ttl_seconds)
@@ -333,7 +322,7 @@ class CloudFrontLogsUploadService:
             profile_name=inventory.profile_name,
             distributions=updated_distributions,
         )
-        cache_store.write_if_changed(updated_state.to_payload())
+        self.state_repository.save(updated_state)
         return CloudFrontLogsUploadSnapshot(
             profile_name=inventory.profile_name,
             upload_by_distribution=upload_by_distribution,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal, ROUND_HALF_UP
 from datetime import datetime
 from pathlib import Path
@@ -33,29 +33,17 @@ except Exception:
     Markdown = None
 from textual.widgets._progress_bar import Bar
 
-from cft.aws.cloudwatch import CloudFrontUsageService
-from cft.aws.cloudfront import CloudFrontInventory, CloudFrontInventoryService
-from cft.aws.cloudfront_s3_logs import CloudFrontS3LogsUploadService
-from cft.aws.cloudwatch_logs import (
-    CloudFrontLogsUploadService,
-    CloudWatchLogGroupDiscoveryService,
-    CloudWatchLogGroupSummary,
-)
-from cft.cache.store import JsonFileStore
-from cft.aws.s3 import S3BucketDiscoveryService
-from cft.config.paths import AppPaths, get_app_paths
-from cft.config.settings import (
-    display_data_export_prefix,
-    load_app_settings,
-    save_cwl_log_group_settings,
-    save_data_export_settings,
-    settings_profile_name,
-)
-from cft.data_exports import BillingSnapshot, CurDataExportService
-from cft.models.cache import ProfileCacheState, SourceMetrics, normalize_distribution_type
+from cft.application import CftApplication, DashboardLoadError
+from cft.models.billing import BillingSnapshot
+from cft.models.cache import SourceMetrics, normalize_distribution_type
 from cft.models.cache import StandardLogDeliveryRecord
+from cft.models.configuration import (
+    CloudWatchLogGroupSummary,
+    SaveCloudWatchLogs,
+    SaveDataExport,
+)
 from cft.models.distribution import DistributionSummary
-from cft.startup_trace import StartupTrace
+from cft.models.inventory import CloudFrontInventory
 from cft.tui.screens.cwl_logs_setup import (
     CwlLogGroupSetupResult,
     CwlLogGroupSetupScreen,
@@ -68,10 +56,7 @@ from cft.tui.screens.cur_export_setup import (
     CurExportStatus,
 )
 from cft.tui.screens.distribution_detail import DistributionDetailScreen
-
-InventoryLoader = Callable[[], CloudFrontInventory]
-UsageLoader = Callable[[CloudFrontInventory], dict[str, SourceMetrics]]
-BillingLoader = Callable[[], BillingSnapshot]
+from cft.tui.formatting import display_data_export_prefix
 
 @dataclass(frozen=True)
 class TableColumnSpec:
@@ -715,76 +700,16 @@ class CftApp(App[None]):
     def __init__(
         self,
         *,
-        profile_name: str | None = None,
-        inventory_loader: InventoryLoader | None = None,
-        usage_loader: UsageLoader | None = None,
-        log_group_loader: Callable[[], tuple[CloudWatchLogGroupSummary, ...]] | None = None,
-        bucket_loader: Callable[[], tuple[str, ...]] | None = None,
-        billing_loader: BillingLoader | None = None,
-        paths: AppPaths | None = None,
+        application: CftApplication,
         now: Callable[[], datetime] = datetime.now,
         watch_css: bool = False,
-        startup_trace: StartupTrace | None = None,
     ) -> None:
         super().__init__(watch_css=watch_css)
         self.register_theme(CFT_AWS_THEME)
         self.theme = CFT_AWS_THEME.name
-        self.profile_name = profile_name
-        self.paths = paths or get_app_paths()
-        self.startup_trace = startup_trace or StartupTrace.from_env()
-        self.settings_profile_name = settings_profile_name(profile_name)
-        self.settings = load_app_settings(
-            self.paths,
-            profile_name=self.settings_profile_name,
-        )
-        self._inventory_service = CloudFrontInventoryService(
-            profile_name=profile_name,
-            paths=self.paths,
-            settings=self.settings,
-            trace=self.startup_trace,
-        )
-        self._usage_service = CloudFrontUsageService(
-            profile_name=profile_name,
-            paths=self.paths,
-            settings=self.settings,
-            trace=self.startup_trace,
-        )
-        self._s3_logs_upload_service = CloudFrontS3LogsUploadService(
-            profile_name=profile_name,
-            paths=self.paths,
-            settings=self.settings,
-            trace=self.startup_trace,
-        )
-        self._logs_upload_service = CloudFrontLogsUploadService(
-            profile_name=profile_name,
-            paths=self.paths,
-            settings=self.settings,
-            trace=self.startup_trace,
-        )
-        self._log_group_service = CloudWatchLogGroupDiscoveryService(
-            profile_name=profile_name,
-            paths=self.paths,
-        )
-        self._bucket_service = S3BucketDiscoveryService(
-            profile_name=profile_name,
-            paths=self.paths,
-        )
-        self._billing_service = CurDataExportService(
-            profile_name=profile_name,
-            paths=self.paths,
-            settings=self.settings,
-            trace=self.startup_trace,
-        )
-        self._inventory_loader_is_default = inventory_loader is None
-        self._usage_loader_is_default = usage_loader is None
-        self._log_group_loader_is_default = log_group_loader is None
-        self._bucket_loader_is_default = bucket_loader is None
-        self._billing_loader_is_default = billing_loader is None
-        self.inventory_loader = inventory_loader or self._inventory_service.load
-        self.usage_loader = usage_loader or self._default_usage_loader
-        self.log_group_loader = log_group_loader or self._default_log_group_loader
-        self.bucket_loader = bucket_loader or self._bucket_service.list_bucket_names
-        self.billing_loader = billing_loader or self._billing_service.load
+        self.application = application
+        self.settings_profile_name = application.profile_name
+        self.configuration = application.get_configuration()
         self.now = now
         self.inventory: CloudFrontInventory | None = None
         self.usage_by_distribution: dict[str, SourceMetrics] = {}
@@ -793,10 +718,7 @@ class CftApp(App[None]):
             configured=False,
             message="Setup required",
         )
-        self._show_onboarding = not self._has_seen_onboarding()
-        self._last_inventory_from_cache = False
-        self._last_usage_from_cache = False
-        self._last_billing_from_cache = False
+        self._show_onboarding = not application.has_seen_onboarding()
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -805,6 +727,14 @@ class CftApp(App[None]):
                 yield Static("Loading CloudFront data...", id="loading-title")
                 yield ProgressBar(id="loading-progress")
                 yield Static("Preparing AWS session...", id="loading-status")
+                yield Static("", id="loading-help", classes="hidden")
+                yield Button(
+                    "Retry",
+                    id="loading-retry",
+                    variant="primary",
+                    compact="compact",
+                    classes="hidden",
+                )
             with VerticalScroll(id="dashboard-scroll", classes="hidden"):
                 yield SummaryWidgetShowcase(
                     profile_name=self.settings_profile_name,
@@ -892,6 +822,9 @@ class CftApp(App[None]):
         elif event.button.id == "onboarding-continue":
             self._dismiss_onboarding()
             event.stop()
+        elif event.button.id == "loading-retry":
+            self.action_refresh()
+            event.stop()
 
     def on_key(self, event: events.Key) -> None:
         if self._show_onboarding and event.key in {"enter", "escape", "q", "space"}:
@@ -931,62 +864,36 @@ class CftApp(App[None]):
     async def _load_data(self, *, refresh: bool) -> None:
         self._set_loading_state(True, "Loading CloudFront inventory...")
         try:
-            with self.startup_trace.step("startup.inventory", refresh=refresh) as step:
-                self.inventory = await asyncio.to_thread(self._load_inventory, refresh=refresh)
-                step["from_cache"] = self._last_inventory_from_cache
-        except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
-            self._set_status(f"AWS inventory unavailable: {error}")
-            self._set_loading_state(False, f"AWS inventory unavailable: {error}")
-            self.startup_trace.write()
-            return
-
-        try:
             self._set_loading_state(True, "Loading CloudWatch usage and logs...")
-            with self.startup_trace.step("startup.usage", refresh=refresh) as step:
-                self.usage_by_distribution = await asyncio.to_thread(
-                    self._load_usage,
-                    self.inventory,
-                    refresh=refresh,
-                )
-                step["from_cache"] = self._last_usage_from_cache
-        except Exception as error:  # pragma: no cover - exact boto3 errors vary by credential setup.
-            self.usage_by_distribution = {}
-            self._set_status(f"CloudWatch usage unavailable: {error}")
-            self._set_loading_state(False, f"CloudWatch usage unavailable: {error}")
-            self.startup_trace.write()
+            result = await asyncio.to_thread(
+                self.application.load_dashboard,
+                refresh=refresh,
+            )
+        except DashboardLoadError as error:
+            if error.stage != "inventory":
+                self.usage_by_distribution = {}
+            presentation = error.presentation(profile_name=self.settings_profile_name)
+            self._set_load_error(presentation.title, presentation.message)
+            self.application.write_startup_trace()
             return
 
-        try:
-            self._set_loading_state(True, "Loading CUR billing summary...")
-            with self.startup_trace.step("startup.billing", refresh=refresh) as step:
-                self.billing_snapshot = await asyncio.to_thread(
-                    self._load_billing,
-                    refresh=refresh,
-                )
-                step["from_cache"] = self._last_billing_from_cache
-        except Exception as error:  # pragma: no cover - exact boto3/duckdb errors vary.
-            self.billing_snapshot = BillingSnapshot(
-                profile_name=self.settings_profile_name,
-                configured=bool(
-                    self.settings.data_export.bucket and self.settings.data_export.export_name
-                ),
-                message=f"Billing unavailable: {error}",
-            )
-            self._set_status(f"CUR billing unavailable: {error}")
+        snapshot = result.snapshot
+        self.inventory = snapshot.inventory
+        self.usage_by_distribution = snapshot.usage_by_distribution
+        self.billing_snapshot = snapshot.billing
+        self.configuration = snapshot.configuration
+        for warning in result.warnings:
+            if warning.stage == "billing":
+                self._set_status(f"CUR billing unavailable: {warning.message}")
 
         self._refresh_distribution_table()
         self._refresh_summary()
         self._refresh_active_distribution_preview()
-        loaded_from_cache = (
-            self._last_inventory_from_cache
-            and self._last_usage_from_cache
-            and self._last_billing_from_cache
-        )
         self._set_loading_state(
             False,
             (
                 f"Loaded cached CloudFront data at {self.now():%H:%M:%S}"
-                if loaded_from_cache
+                if result.from_cache
                 else f"Loaded CloudFront data at {self.now():%H:%M:%S}"
             ),
         )
@@ -995,58 +902,42 @@ class CftApp(App[None]):
             message = f"Refreshed CloudWatch usage and logs at {refreshed_at}"
             self._set_status(message)
             self.notify(message, title="cft refresh", severity="information", timeout=2.5)
-        self.startup_trace.write()
-
-    def _load_inventory(self, *, refresh: bool) -> CloudFrontInventory:
-        if self._inventory_loader_is_default:
-            inventory = self._inventory_service.load(refresh=refresh)
-            self._last_inventory_from_cache = inventory.from_cache
-            return inventory
-        inventory = self.inventory_loader()
-        self._last_inventory_from_cache = getattr(inventory, "from_cache", False)
-        return inventory
-
-    def _load_usage(
-        self,
-        inventory: CloudFrontInventory,
-        *,
-        refresh: bool,
-    ) -> dict[str, SourceMetrics]:
-        if self._usage_loader_is_default:
-            snapshot = self._usage_service.load(inventory, refresh=refresh)
-            if self.settings.aws.cloudfront_bytes_uploaded_metric:
-                self._last_usage_from_cache = snapshot.from_cache
-                return snapshot.usage_by_distribution
-
-            s3_upload_snapshot = self._s3_logs_upload_service.load(inventory, refresh=refresh)
-            upload_snapshot = self._logs_upload_service.load(inventory, refresh=refresh)
-            self._last_usage_from_cache = (
-                snapshot.from_cache
-                and s3_upload_snapshot.from_cache
-                and upload_snapshot.from_cache
-            )
-            return self._merge_usage_snapshots(
-                self._merge_usage_snapshots(
-                    snapshot.usage_by_distribution,
-                    s3_upload_snapshot.upload_by_distribution,
-                ),
-                upload_snapshot.upload_by_distribution,
-            )
-        self._last_usage_from_cache = False
-        return self.usage_loader(inventory)
+        self.application.write_startup_trace()
 
     def _set_loading_state(self, loading: bool, message: str) -> None:
         loading_panel = self.query_one("#loading-panel", Vertical)
         dashboard = self.query_one("#dashboard-scroll", VerticalScroll)
+        title = self.query_one("#loading-title", Static)
         status = self.query_one("#loading-status", Static)
+        progress = self.query_one("#loading-progress", ProgressBar)
+        help_text = self.query_one("#loading-help", Static)
+        retry = self.query_one("#loading-retry", Button)
         status.update(message)
         if loading:
+            title.update("Loading CloudFront data...")
             loading_panel.remove_class("hidden")
             dashboard.add_class("hidden")
-            self.query_one("#loading-progress", ProgressBar).update(total=None, progress=0)
+            progress.remove_class("hidden")
+            progress.update(total=None, progress=0)
+            help_text.add_class("hidden")
+            retry.add_class("hidden")
         else:
             loading_panel.add_class("hidden")
             dashboard.remove_class("hidden")
+
+    def _set_load_error(self, title: str, message: str) -> None:
+        self.query_one("#loading-panel", Vertical).remove_class("hidden")
+        self.query_one("#dashboard-scroll", VerticalScroll).add_class("hidden")
+        self.query_one("#loading-title", Static).update(title)
+        self.query_one("#loading-status", Static).update(message)
+        self.query_one("#loading-progress", ProgressBar).add_class("hidden")
+        help_text = self.query_one("#loading-help", Static)
+        help_text.update("Fix the AWS setup, then press r or select Retry. cft will stay open.")
+        help_text.remove_class("hidden")
+        retry = self.query_one("#loading-retry", Button)
+        retry.remove_class("hidden")
+        if not self._show_onboarding:
+            self.call_after_refresh(retry.focus)
 
     def _set_status(self, message: str) -> None:
         try:
@@ -1078,9 +969,9 @@ class CftApp(App[None]):
 
     def _cur_export_status(self) -> CurExportStatus:
         return CurExportStatus(
-            bucket=self.settings.data_export.bucket,
-            prefix=self.settings.data_export.prefix,
-            export_name=self.settings.data_export.export_name,
+            bucket=self.configuration.data_export.bucket,
+            prefix=self.configuration.data_export.prefix,
+            export_name=self.configuration.data_export.export_name,
         )
 
     def _open_configuration_menu(self) -> None:
@@ -1100,12 +991,13 @@ class CftApp(App[None]):
             self._open_cwl_log_group_setup()
 
     def _cwl_log_group_status(self) -> CwlLogGroupStatus:
-        return CwlLogGroupStatus(log_group=self.settings.aws.cwl_log_group)
+        return CwlLogGroupStatus(log_group=self.configuration.cloudwatch_logs.log_group)
 
-    def _open_cur_export_setup(self) -> None:
+    @work(exclusive=True, group="configuration-discovery")
+    async def _open_cur_export_setup(self) -> None:
         error_message = None
         try:
-            bucket_names = self._load_bucket_names()
+            bucket_names = await asyncio.to_thread(self._load_bucket_names)
         except Exception as error:  # pragma: no cover - boto3 exception shapes vary.
             bucket_names = ()
             error_message = f"Bucket discovery failed: {error}"
@@ -1120,10 +1012,11 @@ class CftApp(App[None]):
             self._handle_cur_export_setup_result,
         )
 
-    def _open_cwl_log_group_setup(self) -> None:
+    @work(exclusive=True, group="configuration-discovery")
+    async def _open_cwl_log_group_setup(self) -> None:
         error_message = None
         try:
-            log_groups = self._load_log_groups()
+            log_groups = await asyncio.to_thread(self._load_log_groups)
         except Exception as error:  # pragma: no cover - boto3 exception shapes vary.
             log_groups = ()
             error_message = f"Log group discovery failed: {error}"
@@ -1145,17 +1038,12 @@ class CftApp(App[None]):
         if result is None:
             return
 
-        save_data_export_settings(
-            paths=self.paths,
-            profile_name=self.settings_profile_name,
-            bucket=result.bucket,
-            prefix=result.prefix,
-            export_name=result.export_name,
-        )
-        self.settings = load_app_settings(
-            self.paths,
-            profile_name=self.settings_profile_name,
-            create=False,
+        self.configuration = self.application.save_data_export(
+            SaveDataExport(
+                bucket=result.bucket,
+                prefix=result.prefix,
+                export_name=result.export_name,
+            )
         )
         self._refresh_summary()
         self._set_status(
@@ -1169,15 +1057,8 @@ class CftApp(App[None]):
         if result is None:
             return
 
-        save_cwl_log_group_settings(
-            paths=self.paths,
-            profile_name=self.settings_profile_name,
-            log_group=result.log_group,
-        )
-        self.settings = load_app_settings(
-            self.paths,
-            profile_name=self.settings_profile_name,
-            create=False,
+        self.configuration = self.application.save_cwl_log_group(
+            SaveCloudWatchLogs(log_group=result.log_group)
         )
         self._refresh_summary()
         self._set_status(
@@ -1189,67 +1070,21 @@ class CftApp(App[None]):
         if not self._show_onboarding:
             return
         self._show_onboarding = False
-        self._mark_onboarding_seen()
+        self.application.mark_onboarding_seen()
         try:
             self.query_one("#onboarding-modal", Container).add_class("hidden")
             self.query_one("#page", Container).remove_class("hidden")
+            retry = self.query_one("#loading-retry", Button)
+            if not retry.has_class("hidden"):
+                self.call_after_refresh(retry.focus)
         except NoMatches:
             return
 
     def _load_bucket_names(self) -> tuple[str, ...]:
-        if self._bucket_loader_is_default:
-            return self._bucket_service.list_bucket_names()
-        return self.bucket_loader()
+        return self.application.discover_s3_buckets()
 
     def _load_log_groups(self) -> tuple[CloudWatchLogGroupSummary, ...]:
-        if self._log_group_loader_is_default:
-            return self._log_group_service.list_log_groups()
-        return self.log_group_loader()
-
-    def _load_billing(self, *, refresh: bool) -> BillingSnapshot:
-        if self._billing_loader_is_default:
-            snapshot = self._billing_service.load(refresh=refresh)
-            self._last_billing_from_cache = snapshot.from_cache
-            return snapshot
-        self._last_billing_from_cache = False
-        return self.billing_loader()
-
-    def _has_seen_onboarding(self) -> bool:
-        cache_store = JsonFileStore(self.paths.profile_state_file(self.settings_profile_name))
-        state = ProfileCacheState.from_payload(
-            cache_store.read(),
-            profile_name=self.settings_profile_name,
-        )
-        return state.onboarding_seen
-
-    def _mark_onboarding_seen(self) -> None:
-        cache_store = JsonFileStore(self.paths.profile_state_file(self.settings_profile_name))
-        state = ProfileCacheState.from_payload(
-            cache_store.read(),
-            profile_name=self.settings_profile_name,
-        )
-        if state.onboarding_seen:
-            return
-        cache_store.write_if_changed(
-            replace(state, profile_name=self.settings_profile_name, onboarding_seen=True).to_payload()
-        )
-
-    @staticmethod
-    def _merge_usage_snapshots(
-        base_usage: dict[str, SourceMetrics],
-        upload_usage: dict[str, SourceMetrics],
-    ) -> dict[str, SourceMetrics]:
-        merged = dict(base_usage)
-        for distribution_id, upload in upload_usage.items():
-            existing = merged.get(distribution_id, SourceMetrics())
-            merged[distribution_id] = replace(
-                existing,
-                upload=upload.upload if upload.upload is not None else existing.upload,
-                last_updated=upload.last_updated or existing.last_updated,
-                month_key=upload.month_key or existing.month_key,
-                source_key=upload.source_key or existing.source_key,
-            )
-        return merged
+        return self.application.discover_cwl_log_groups()
 
     def _refresh_distribution_table(self) -> None:
         if self.inventory is None:
@@ -1326,12 +1161,10 @@ class CftApp(App[None]):
             return
 
         normalized_type = normalize_distribution_type(selected_type)
-        profile_name = self.inventory.profile_name if self.inventory else self.settings_profile_name
         try:
-            self._inventory_service.save_distribution_type(
-                profile_name=profile_name,
-                distribution_id=distribution_id,
-                distribution_type=normalized_type,
+            snapshot = self.application.set_distribution_type(
+                distribution_id,
+                normalized_type,
             )
         except Exception as error:  # pragma: no cover - filesystem errors are environment-specific.
             message = f"Failed to save plan type for {distribution_id}: {error}"
@@ -1339,14 +1172,9 @@ class CftApp(App[None]):
             self.notify(message, title="cft plan type", severity="error", timeout=3)
             return
 
-        if self.inventory is not None:
-            self.inventory = replace(
-                self.inventory,
-                distribution_types={
-                    **self.inventory.distribution_types,
-                    distribution_id: normalized_type,
-                },
-            )
+        if snapshot is not None:
+            self.inventory = snapshot.inventory
+            self.usage_by_distribution = snapshot.usage_by_distribution
 
         self._refresh_distribution_table()
         message = f"Saved {normalized_type} plan type for {distribution_id}."
@@ -1633,65 +1461,3 @@ class CftApp(App[None]):
         else:
             number = f"{quantized:.{decimals}f}"
         return f"{number}{suffix}"
-
-    def _default_usage_loader(self, inventory: CloudFrontInventory) -> dict[str, SourceMetrics]:
-        snapshot = CloudFrontUsageService(profile_name=inventory.profile_name).load(inventory)
-        return snapshot.usage_by_distribution
-
-    def _default_log_group_loader(self) -> tuple[CloudWatchLogGroupSummary, ...]:
-        return self._log_group_service.list_log_groups()
-
-def run_tui(profile_name: str | None = None, *, watch_css: bool = False) -> None:
-    # If no AWS configuration or credentials are present, show a helpful message and exit
-    import os
-    from pathlib import Path
-
-    aws_env_keys = (
-        "AWS_ACCESS_KEY_ID",
-        "AWS_SECRET_ACCESS_KEY",
-        "AWS_SESSION_TOKEN",
-        "AWS_PROFILE",
-        "AWS_ROLE_ARN",
-        "AWS_SSO_ACCESS_TOKEN",
-    )
-
-    env_has = any(os.environ.get(k) for k in aws_env_keys)
-    env_has = env_has or bool(os.environ.get("AWS_SHARED_CREDENTIALS_FILE")) or bool(os.environ.get("AWS_CONFIG_FILE"))
-
-    home = Path.home()
-    credentials_file = home.joinpath(".aws", "credentials")
-    config_file = home.joinpath(".aws", "config")
-
-    shared_creds = os.environ.get("AWS_SHARED_CREDENTIALS_FILE")
-    shared_config = os.environ.get("AWS_CONFIG_FILE")
-
-    files_exist = any(
-        p.exists()
-        for p in (
-            credentials_file,
-            config_file,
-            Path(shared_creds) if shared_creds else Path(),
-            Path(shared_config) if shared_config else Path(),
-        )
-    )
-
-    if not env_has and not files_exist:
-        # Keep output minimal and clear for TUI users running from terminal
-        print(
-            "No AWS credentials or config found in ~/.aws and no AWS environment variables set.\n"
-            "Please run 'aws configure' or set AWS_PROFILE/AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.\n"
-            "Exiting."
-        )
-        return
-
-    CftApp(profile_name=profile_name, watch_css=watch_css).run()
-
-
-def profile_startup(profile_name: str | None = None, *, refresh: bool = False) -> str:
-    trace = StartupTrace(enabled=True)
-    app = CftApp(profile_name=profile_name, startup_trace=trace)
-    with trace.step("startup.total", refresh=refresh):
-        inventory = app._load_inventory(refresh=refresh)
-        app._load_usage(inventory, refresh=refresh)
-        app._load_billing(refresh=refresh)
-    return trace.render_text()

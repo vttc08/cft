@@ -160,7 +160,6 @@ def test_cloudfront_s3_logs_upload_service_downloads_current_month_files_and_cac
         aws=AwsSettings(),
         cache=CacheSettings(logs_upload_ttl_seconds=3600),
     )
-    bucket = "cloudfront-logs"
     current = datetime(2026, 5, 13, 12, tzinfo=timezone.utc)
     pages = [
         {

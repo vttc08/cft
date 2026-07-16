@@ -5,7 +5,7 @@ from textual.containers import Container, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Static
 
-from cft.config.settings import display_cwl_log_group, display_data_export_prefix
+from cft.tui.formatting import display_cwl_log_group, display_data_export_prefix
 from cft.tui.screens.cwl_logs_setup import CwlLogGroupStatus
 from cft.tui.screens.cur_export_setup import CurExportStatus
 

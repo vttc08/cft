@@ -137,6 +137,12 @@ Favor MVP slices that provide useful CLI behavior and testable service layers be
    - Treat non-interactive CLI JSON as an API.
    - Add fields without breaking existing keys when practical.
 
+9. **Keep frontends behind the application facade.**
+   - TUI and CLI code must use typed application use cases and snapshots rather than constructing
+     boto3 services or parsing/writing profile state directly.
+   - Treat profile `state.json` as internal versioned persistence; define stable CLI JSON output
+     separately.
+
 ---
 
 ## High-Level Architecture

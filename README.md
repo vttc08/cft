@@ -15,6 +15,22 @@ uv run cft startup-profile --profile default
 
 The project uses a `src/` layout and is packaged via `pyproject.toml`.
 
+## Architecture
+
+`cft` separates frontend rendering from AWS and persistence work:
+
+- `cft.application` exposes typed dashboard, refresh, discovery, and configuration use cases.
+- `cft.bootstrap` constructs boto3-backed adapters and launches the selected frontend.
+- AWS, CloudWatch Logs, S3 logs, and Data Export services share the profile-scoped state
+  repository and retain their existing cache policies.
+- `cft.tui` consumes immutable application snapshots and owns only Textual interaction,
+  formatting, and responsive layout behavior. Blocking discovery and refresh work runs in
+  Textual workers.
+
+The profile `state.json` file is canonical internal storage, not a public JSON API. Future CLI
+JSON output should use a separately documented serializer over the same application snapshots.
+See [ADR-001](docs/decisions/001-typed-application-facade.md) for the decision and trade-offs.
+
 Use `uv run cft` and `uv run cft dev` from the repo root when you are not
 activating the virtual environment manually.
 
@@ -61,6 +77,8 @@ With `CFT_HOME=~/.cft`, the layout is:
 ```
 
 AWS credentials stay in `~/.aws/config` and `~/.aws/credentials`; `cft` does not copy access keys into its own config directory.
+
+If credentials are missing, incomplete, malformed, expired, or rejected, the TUI stays open and displays profile-specific recovery guidance. Fix the shared AWS files, environment variables, role, or SSO session, then press `r` or select **Retry** without restarting `cft`.
 
 The distribution browser reads `cache/<profile>/state.json` first. If the inventory cache is fresh, no CloudFront or STS calls are made. If it is stale, the app refreshes from AWS and rewrites the inventory section inside the JSON state file with distribution IDs as keys. The TUI also reads per-distribution CloudWatch usage from each distribution's `cw` object in the same file. When the current-month usage cache is stale, `cft` refreshes `BytesDownloaded` and `Requests` from CloudWatch in `us-east-1`, updates `cw.last_updated` and `cw.month_key`, and falls back to cached values if CloudWatch is unavailable. `cw.upload` remains empty because CloudFront `BytesUploaded` is not treated as reliable for the WebSocket case.
 
