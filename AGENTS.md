@@ -115,18 +115,24 @@ Favor MVP slices that provide useful CLI behavior and testable service layers be
    - Keep Android dependency markers, backend detection, JSON normalization, timeouts, and
      actionable errors covered by focused tests.
 
-5. **Do not commit secrets.**
+5. **Use Termux's packaged Python runtime on Android.**
+   - Keep `uv` configured to prefer the system interpreter so Termux-native standard-library
+     extensions link against the libraries installed under `$PREFIX`.
+   - Treat `pyexpat` as part of CPython plus Termux's `libexpat`, not as a PyPI dependency.
+   - Keep missing Python XML support distinct from AWS credential failures in TUI guidance.
+
+6. **Do not commit secrets.**
    - Never commit AWS credentials, `.env` secrets, profile credentials, downloaded billing files, or log files.
    - Respect `.gitignore` for `~/.cft`-style state and local test data.
    - Before committing, confirm no AWS credentials, downloaded Parquet files, local cache files, or logs are staged.
    - Add `.gitignore` entries for local cache and downloaded data if missing.
 
-6. **Separate operational usage from billing truth.**
+7. **Separate operational usage from billing truth.**
    - CloudWatch metrics are operational usage per distribution.
    - Data Exports / CUR 2.0 are billing/cost truth per account/profile.
    - CloudFront standard logs are optional deeper request/log visibility.
 
-7. **Design for mobile terminals.**
+8. **Design for mobile terminals.**
    - The TUI must work on Termux and narrow terminal widths.
    - Tables must truncate gracefully and adapt to terminal width.
    - Use Textual + Rich responsive patterns and provide narrow and wide layout test cases.
@@ -136,16 +142,16 @@ Favor MVP slices that provide useful CLI behavior and testable service layers be
    - Every TUI action must be reachable by keyboard: arrow keys for movement, Tab/Shift+Tab for focus traversal, Enter/Space for activation, Escape or `q` for dismissal/back, and explicit key bindings for refresh/configuration actions.
    - Do not require tapping buttons, dragging scrollbars, hover states, or wheel scrolling for core workflows. Prefer visible focus, keyboard-scrollable containers, and CLI equivalents for automation.
 
-8. **Keep side effects explicit.**
+9. **Keep side effects explicit.**
    - Default commands should read cached/local data when possible.
    - Networked AWS reads should be visible in command names, flags, logs, status messages, or refresh flows.
    - Mutating AWS actions require explicit user confirmation in TUI/CLI flows and separate tests for confirmation behavior.
 
-9. **Keep JSON output stable.**
+10. **Keep JSON output stable.**
    - Treat non-interactive CLI JSON as an API.
    - Add fields without breaking existing keys when practical.
 
-10. **Keep frontends behind the application facade.**
+11. **Keep frontends behind the application facade.**
    - TUI and CLI code must use typed application use cases and snapshots rather than constructing
      boto3 services or parsing/writing profile state directly.
    - Treat profile `state.json` as internal versioned persistence; define stable CLI JSON output

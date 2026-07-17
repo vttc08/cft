@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from dataclasses import dataclass
 
 from botocore.exceptions import (
@@ -18,10 +19,14 @@ from botocore.exceptions import (
 )
 
 
+_AWS_RETRY_HELP = "Fix the AWS setup, then press r or select Retry. cft will stay open."
+
+
 @dataclass(frozen=True)
 class DashboardErrorPresentation:
     title: str
     message: str
+    help_text: str = _AWS_RETRY_HELP
 
 
 class DashboardLoadError(RuntimeError):
@@ -52,6 +57,37 @@ _EXPIRED_CREDENTIAL_CODES = {"ExpiredToken", "ExpiredTokenException"}
 _ACCESS_DENIED_CODES = {"AccessDenied", "AccessDeniedException", "UnauthorizedOperation"}
 
 
+def _exception_chain(error: BaseException) -> tuple[BaseException, ...]:
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        chain.append(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return tuple(chain)
+
+
+def _is_missing_python_expat(error: BaseException) -> bool:
+    """Recognize CPython XML parser failures, including a missing libexpat."""
+    for item in _exception_chain(error):
+        module_name = str(getattr(item, "name", "")).lower()
+        message = str(item).lower()
+        if module_name in {"expat", "pyexpat", "xml.parsers.expat"}:
+            return True
+        if any(
+            marker in message
+            for marker in (
+                "no module named expat; use simplexmltreebuilder instead",
+                "no module named 'pyexpat'",
+                'no module named "pyexpat"',
+                "libexpat.so",
+            )
+        ):
+            return True
+    return False
+
+
 def dashboard_error_presentation(
     error: Exception,
     *,
@@ -60,6 +96,22 @@ def dashboard_error_presentation(
 ) -> DashboardErrorPresentation:
     """Translate SDK failures into concise, actionable frontend-safe text."""
     profile = profile_name or "default"
+
+    if _is_missing_python_expat(error):
+        return DashboardErrorPresentation(
+            title="Python XML support unavailable",
+            message=(
+                f"The Python interpreter running cft ({sys.executable}) cannot load its "
+                "standard-library pyexpat module, which botocore needs to read CloudFront "
+                "responses. This is a Python installation problem, not an AWS credentials "
+                "problem. On Termux run `pkg upgrade`, `pkg reinstall python libexpat`, then "
+                "`uv sync --python \"$PREFIX/bin/python\"`. Do not install an expat package "
+                "from pip."
+            ),
+            help_text=(
+                "Repair Python XML support, then press r or select Retry. cft will stay open."
+            ),
+        )
 
     if isinstance(error, NoCredentialsError):
         return DashboardErrorPresentation(

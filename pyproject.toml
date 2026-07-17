@@ -26,6 +26,11 @@ dev = [
 [project.scripts]
 cft = "cft.main:main"
 
+[tool.uv]
+# Termux's packaged CPython includes Android-linked standard-library extensions
+# that may be absent from a uv-managed interpreter.
+python-preference = "system"
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 

@@ -94,3 +94,41 @@ def test_dashboard_error_presentation_distinguishes_valid_but_unauthorized_crede
     assert presentation.title == "AWS permission denied"
     assert "STS GetCallerIdentity" in presentation.message
     assert "CloudFront inventory" in presentation.message
+
+
+@pytest.mark.parametrize(
+    "error",
+    (
+        ImportError("No module named expat; use SimpleXMLTreeBuilder instead"),
+        ModuleNotFoundError("No module named 'pyexpat'", name="pyexpat"),
+        ImportError(
+            'dlopen failed: library "libexpat.so.1" not found: needed by pyexpat'
+        ),
+    ),
+)
+def test_dashboard_error_presentation_explains_missing_python_xml_support(
+    error: Exception,
+) -> None:
+    presentation = dashboard_error_presentation(
+        error,
+        profile_name="default",
+        stage="inventory",
+    )
+
+    assert presentation.title == "Python XML support unavailable"
+    assert "pyexpat" in presentation.message
+    assert "not an AWS credentials problem" in presentation.message
+    assert "pkg reinstall python libexpat" in presentation.message
+    assert 'uv sync --python "$PREFIX/bin/python"' in presentation.message
+    assert "Repair Python XML support" in presentation.help_text
+
+
+def test_dashboard_error_presentation_does_not_misclassify_other_import_errors() -> None:
+    presentation = dashboard_error_presentation(
+        ModuleNotFoundError("No module named 'example'", name="example"),
+        profile_name="default",
+        stage="inventory",
+    )
+
+    assert presentation.title == "AWS inventory unavailable"
+    assert "No module named 'example'" in presentation.message

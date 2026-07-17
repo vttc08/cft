@@ -873,7 +873,11 @@ class CftApp(App[None]):
             if error.stage != "inventory":
                 self.usage_by_distribution = {}
             presentation = error.presentation(profile_name=self.settings_profile_name)
-            self._set_load_error(presentation.title, presentation.message)
+            self._set_load_error(
+                presentation.title,
+                presentation.message,
+                presentation.help_text,
+            )
             self.application.write_startup_trace()
             return
 
@@ -935,14 +939,14 @@ class CftApp(App[None]):
             loading_panel.add_class("hidden")
             dashboard.remove_class("hidden")
 
-    def _set_load_error(self, title: str, message: str) -> None:
+    def _set_load_error(self, title: str, message: str, help_message: str) -> None:
         self.query_one("#loading-panel", Vertical).remove_class("hidden")
         self.query_one("#dashboard-scroll", VerticalScroll).add_class("hidden")
         self.query_one("#loading-title", Static).update(title)
         self.query_one("#loading-status", Static).update(message)
         self.query_one("#loading-progress", ProgressBar).add_class("hidden")
         help_text = self.query_one("#loading-help", Static)
-        help_text.update("Fix the AWS setup, then press r or select Retry. cft will stay open.")
+        help_text.update(help_message)
         help_text.remove_class("hidden")
         retry = self.query_one("#loading-retry", Button)
         retry.remove_class("hidden")

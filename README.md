@@ -18,15 +18,29 @@ The project uses a `src/` layout and is packaged via `pyproject.toml`.
 ### Termux / Android
 
 `cft` supports the current Termux Python packages (Python 3.13 or newer). Update an older
-Termux installation and install the native DuckDB CLI before starting the app:
+Termux installation and install CPython's Expat runtime plus the native DuckDB CLI before
+starting the app:
 
 ```bash
 pkg upgrade
-pkg install python duckdb
+pkg install python libexpat duckdb
 python -c "import sys; print(sys.version); print(sys.platform)"
+python -c "import xml.parsers.expat as expat; print(expat.EXPAT_VERSION)"
 duckdb -version
+uv sync --python "$PREFIX/bin/python"
+uv run python -c "import xml.parsers.expat as expat; print(expat.EXPAT_VERSION)"
 uv run cft
 ```
+
+The project tells `uv` to prefer a system Python, so a fresh Termux environment uses the
+Android-linked interpreter installed by `pkg`. The explicit `uv sync --python` command also
+repairs an existing `.venv` that was created with a different interpreter.
+
+If the plain `python` Expat check fails, run `pkg upgrade` followed by
+`pkg reinstall python libexpat`, then repeat both checks. `pyexpat` is a CPython standard-library
+extension linked to Termux's `libexpat`; it is not an `expat` package to install from PyPI. If the
+plain check succeeds but the `uv run python` check fails, rerun the explicit `uv sync --python`
+command above before launching cft.
 
 On Android, `uv` does not install or build the DuckDB Python module. `cft` calls the Termux
 `duckdb` executable for local CUR and CloudFront S3-log Parquet aggregates instead. On Linux,

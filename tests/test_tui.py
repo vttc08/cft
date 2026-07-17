@@ -752,6 +752,43 @@ async def _assert_tui_keeps_credential_error_visible_and_retries_without_restart
         assert app.query_one("#distributions").row_count == 3
 
 
+def test_tui_distinguishes_python_xml_failure_from_aws_setup_on_mobile(tmp_path) -> None:
+    asyncio.run(_assert_tui_distinguishes_python_xml_failure_from_aws_setup_on_mobile(tmp_path))
+
+
+async def _assert_tui_distinguishes_python_xml_failure_from_aws_setup_on_mobile(
+    tmp_path,
+) -> None:
+    def inventory_loader() -> CloudFrontInventory:
+        raise DashboardLoadError(
+            "inventory",
+            ImportError("No module named expat; use SimpleXMLTreeBuilder instead"),
+        )
+
+    app = make_app(
+        tmp_path,
+        inventory_loader=inventory_loader,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+
+    async with app.run_test(size=(60, 24)) as pilot:
+        title = app.query_one("#loading-title", Static)
+        for _ in range(20):
+            await pilot.pause()
+            if title.content == "Python XML support unavailable":
+                break
+
+        status = app.query_one("#loading-status", Static).content
+        help_text = app.query_one("#loading-help", Static).content
+        assert title.content == "Python XML support unavailable"
+        assert "pkg reinstall python libexpat" in status
+        assert "not an AWS credentials problem" in status
+        assert "Repair Python XML support" in help_text
+        assert "Fix the AWS setup" not in help_text
+        assert not app.query_one("#loading-retry", Button).has_class("hidden")
+
+
 def test_tui_uses_custom_aws_theme(tmp_path) -> None:
     asyncio.run(_assert_tui_uses_custom_aws_theme(tmp_path))
 
