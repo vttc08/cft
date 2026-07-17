@@ -809,7 +809,7 @@ async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
         assert {
             binding.key if hasattr(binding, "key") else binding[0]
             for binding in app.BINDINGS
-        } == {"r", "ctrl+p", "b", "q", "ctrl+q", "ctrl+c"}
+        } == {"r", "c", "ctrl+p", "b", "q", "ctrl+q", "ctrl+c"}
         active_theme = app.current_theme
         assert active_theme.name == CFT_AWS_THEME.name
         assert active_theme.primary == "#FF9900"
@@ -817,6 +817,86 @@ async def _assert_tui_uses_custom_aws_theme(tmp_path) -> None:
         assert active_theme.accent == "#FF9900"
         assert active_theme.background == "#171A1F"
         assert active_theme.surface == "#1F2329"
+
+
+def test_tui_copies_focused_distribution_url(tmp_path) -> None:
+    asyncio.run(_assert_tui_copies_focused_distribution_url(tmp_path))
+
+
+async def _assert_tui_copies_focused_distribution_url(tmp_path) -> None:
+    notifications: list[tuple[str, str | None, str | None]] = []
+    app = make_app(
+        tmp_path,
+        inventory_loader=fake_inventory,
+        usage_loader=fake_usage,
+        now=lambda: datetime(2026, 5, 11, 9, 30),
+    )
+    app.notify = lambda message, *, title=None, severity=None, timeout=None: notifications.append(  # type: ignore[assignment]
+        (message, title, severity)
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        table = app.query_one("#distributions")
+        table.focus()
+        await pilot.press("down")
+        await pilot.press("c")
+        await pilot.pause()
+
+        assert app.clipboard == "https://d222.cloudfront.net"
+        assert notifications == [
+            (
+                "Copied https://d222.cloudfront.net",
+                "cft clipboard",
+                "information",
+            )
+        ]
+
+
+def test_tui_warns_when_focused_distribution_has_no_url(tmp_path) -> None:
+    asyncio.run(_assert_tui_warns_when_focused_distribution_has_no_url(tmp_path))
+
+
+async def _assert_tui_warns_when_focused_distribution_has_no_url(tmp_path) -> None:
+    notifications: list[tuple[str, str | None, str | None]] = []
+
+    def inventory_without_first_url() -> CloudFrontInventory:
+        inventory = fake_inventory()
+        return replace(
+            inventory,
+            distributions=(
+                replace(inventory.distributions[0], domain_name=""),
+                *inventory.distributions[1:],
+            ),
+        )
+
+    app = make_app(
+        tmp_path,
+        inventory_loader=inventory_without_first_url,
+        usage_loader=fake_usage,
+    )
+    app.notify = lambda message, *, title=None, severity=None, timeout=None: notifications.append(  # type: ignore[assignment]
+        (message, title, severity)
+    )
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        app.query_one("#distributions").focus()
+        await pilot.press("c")
+        await pilot.pause()
+
+        assert app.clipboard == ""
+        assert notifications == [
+            (
+                "The focused distribution has no URL to copy.",
+                "cft clipboard",
+                "warning",
+            )
+        ]
 
 
 def test_tui_truncates_long_distribution_fields_to_fit_narrow_terminal(tmp_path) -> None:

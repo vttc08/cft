@@ -13,6 +13,7 @@ This onboarding content is authored in Markdown so developers can update it easi
 
 - `r` — refresh data
 - `Enter` — open focused distribution
+- `c` — copy the focused distribution URL to the clipboard
 - `Ctrl+P` or `b` — open configuration
 - `q` — close screens / quit
 

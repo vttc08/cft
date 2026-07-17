@@ -689,6 +689,7 @@ class CftApp(App[None]):
     ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         Binding("r", "refresh", "Refresh"),
+        Binding("c", "copy_distribution_url", "Copy URL"),
         Binding("ctrl+p", "setup_configuration", "Open configuration", key_display="ctrl+p"),
         Binding("b", "setup_configuration", "Configuration"),
         Binding("q", "quit", "Quit"),
@@ -774,6 +775,7 @@ class CftApp(App[None]):
                                 "### Helpful shortcuts\n\n"
                                 "- **r** refreshes data\n"
                                 "- **Enter** opens a distribution\n"
+                                "- **c** copies the focused distribution URL\n"
                                 "- **Ctrl+P** opens configuration\n"
                                 "- **b** opens configuration\n"
                                 "- **q** closes screens or quits\n\n"
@@ -814,6 +816,47 @@ class CftApp(App[None]):
 
     def action_setup_cwl_logs(self) -> None:
         self._open_cwl_log_group_setup()
+
+    def action_copy_distribution_url(self) -> None:
+        try:
+            table = self.query_one("#distributions", DataTable)
+        except NoMatches:
+            table = None
+
+        if (
+            table is None
+            or table.row_count == 0
+            or table.cursor_row < 0
+            or table.cursor_row >= table.row_count
+        ):
+            self.notify(
+                "No distribution is available to copy.",
+                title="cft clipboard",
+                severity="warning",
+                timeout=3,
+            )
+            return
+
+        row_key = table.ordered_rows[table.cursor_row].key.value
+        distribution = self._distribution_for_key(row_key)
+        domain = distribution.domain_name.strip() if distribution is not None else ""
+        if not domain:
+            self.notify(
+                "The focused distribution has no URL to copy.",
+                title="cft clipboard",
+                severity="warning",
+                timeout=3,
+            )
+            return
+
+        url = domain if domain.startswith(("http://", "https://")) else f"https://{domain}"
+        self.copy_to_clipboard(url)
+        self.notify(
+            f"Copied {url}",
+            title="cft clipboard",
+            severity="information",
+            timeout=2.5,
+        )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "summary-configuration-action":
