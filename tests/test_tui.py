@@ -7,7 +7,7 @@ from dataclasses import replace
 from botocore.exceptions import NoCredentialsError
 
 from cft.application import DashboardLoadError
-from cft.application.models import DashboardLoadResult, DashboardSnapshot
+from cft.application.models import DashboardLoadResult, DashboardSnapshot, DashboardWarning
 from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths
 from cft.config.settings import (
@@ -180,6 +180,7 @@ class FakeApplication:
         billing_loader=None,
         bucket_loader=None,
         log_group_loader=None,
+        warnings: tuple[DashboardWarning, ...] = (),
     ) -> None:
         self.paths = paths
         self.profile_name = profile_name or "default"
@@ -188,6 +189,7 @@ class FakeApplication:
         self.billing_loader = billing_loader
         self.bucket_loader = bucket_loader or (lambda: ())
         self.log_group_loader = log_group_loader or (lambda: ())
+        self.warnings = warnings
         self.repository = ProfileStateRepository(paths)
         self.latest_snapshot: DashboardSnapshot | None = None
 
@@ -216,6 +218,7 @@ class FakeApplication:
             inventory_from_cache=False,
             usage_from_cache=False,
             billing_from_cache=False,
+            warnings=self.warnings,
         )
 
     def write_startup_trace(self) -> None:
@@ -848,6 +851,39 @@ async def _assert_tui_remains_keyboard_accessible_on_short_terminals(tmp_path) -
 
 def test_tui_refresh_action_reloads_usage_data(tmp_path) -> None:
     asyncio.run(_assert_tui_refresh_action_reloads_usage_data(tmp_path))
+
+
+def test_tui_notifies_without_hiding_dashboard_for_parquet_warning(tmp_path) -> None:
+    asyncio.run(_assert_tui_notifies_without_hiding_dashboard_for_parquet_warning(tmp_path))
+
+
+async def _assert_tui_notifies_without_hiding_dashboard_for_parquet_warning(tmp_path) -> None:
+    notifications: list[tuple[str, str | None, str | None]] = []
+    app = make_app(
+        tmp_path,
+        warnings=(
+            DashboardWarning(
+                stage="s3_logs",
+                message="DuckDB CLI is required; run 'pkg install duckdb' and retry.",
+            ),
+        ),
+    )
+    app.notify = lambda message, *, title=None, severity=None, timeout=None: notifications.append(  # type: ignore[assignment]
+        (message, title, severity)
+    )
+
+    async with app.run_test(size=(60, 20)) as pilot:
+        await pilot.pause()
+        await wait_for_dashboard_ready(app, pilot)
+
+        assert not app.query_one("#dashboard-scroll").has_class("hidden")
+        assert notifications == [
+            (
+                "DuckDB CLI is required; run 'pkg install duckdb' and retry.",
+                "S3 upload analysis unavailable",
+                "warning",
+            )
+        ]
 
 
 async def _assert_tui_refresh_action_reloads_usage_data(tmp_path) -> None:

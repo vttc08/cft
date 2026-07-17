@@ -38,6 +38,7 @@ from cft.models.configuration import (
     SaveCloudWatchLogs,
     SaveDataExport,
 )
+from cft.parquet import ParquetQueryError, build_parquet_query_engine
 from cft.startup_trace import StartupTrace
 
 
@@ -80,11 +81,18 @@ class CftApplicationService:
             "trace": self.startup_trace,
             "state_repository": self.state_repository,
         }
+        parquet_query_engine = build_parquet_query_engine(trace=self.startup_trace)
         self.inventory_service = CloudFrontInventoryService(**traced)
         self.usage_service = CloudFrontUsageService(**traced)
-        self.s3_logs_upload_service = CloudFrontS3LogsUploadService(**traced)
+        self.s3_logs_upload_service = CloudFrontS3LogsUploadService(
+            **traced,
+            query_engine=parquet_query_engine,
+        )
         self.logs_upload_service = CloudFrontLogsUploadService(**traced)
-        self.billing_service = CurDataExportService(**traced)
+        self.billing_service = CurDataExportService(
+            **traced,
+            query_engine=parquet_query_engine,
+        )
         self.log_group_service = CloudWatchLogGroupDiscoveryService(**common)
         self.bucket_service = S3BucketDiscoveryService(**common)
 
@@ -109,15 +117,26 @@ class CftApplicationService:
                 usage = usage_snapshot.usage_by_distribution
                 usage_from_cache = usage_snapshot.from_cache
                 if not self.settings.aws.cloudfront_bytes_uploaded_metric:
-                    s3_snapshot = self.s3_logs_upload_service.load(inventory, refresh=refresh)
+                    try:
+                        s3_snapshot = self.s3_logs_upload_service.load(
+                            inventory,
+                            refresh=refresh,
+                        )
+                    except ParquetQueryError as error:
+                        warnings.append(
+                            DashboardWarning(stage="s3_logs", message=str(error))
+                        )
+                        usage_from_cache = False
+                    else:
+                        usage = self._merge_usage(
+                            usage,
+                            s3_snapshot.upload_by_distribution,
+                        )
+                        usage_from_cache = usage_from_cache and s3_snapshot.from_cache
                     logs_snapshot = self.logs_upload_service.load(inventory, refresh=refresh)
-                    usage = self._merge_usage(
-                        self._merge_usage(usage, s3_snapshot.upload_by_distribution),
-                        logs_snapshot.upload_by_distribution,
-                    )
+                    usage = self._merge_usage(usage, logs_snapshot.upload_by_distribution)
                     usage_from_cache = (
                         usage_from_cache
-                        and s3_snapshot.from_cache
                         and logs_snapshot.from_cache
                     )
                 step["from_cache"] = usage_from_cache
