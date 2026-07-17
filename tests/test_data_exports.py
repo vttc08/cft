@@ -106,6 +106,38 @@ def s3_client() -> object:
     )
 
 
+def test_cur_summary_accepts_cli_json_values(tmp_path) -> None:
+    class QueryEngine:
+        def query(self, files, sql):
+            assert files == [tmp_path / "billing.parquet"]
+            assert "FROM data" in sql
+            return (
+                {
+                    "download_gb": 1.25,
+                    "upload_gb": "0.5",
+                    "requests": 42,
+                    "cost": 0.75,
+                    "data_start": "2026-05-01T00:00:00",
+                    "data_end": "2026-05-11T08:00:00",
+                },
+            )
+
+    service = CurDataExportService(
+        paths=AppPaths.from_base(tmp_path / "cft"),
+        settings=AppSettings(),
+        query_engine=QueryEngine(),
+    )
+
+    snapshot = service._query_summary([tmp_path / "billing.parquet"])
+
+    assert snapshot.download_bytes == 1_250_000_000
+    assert snapshot.upload_bytes == 500_000_000
+    assert snapshot.requests == 42
+    assert snapshot.cost == 0.75
+    assert snapshot.data_start == datetime(2026, 5, 1, tzinfo=timezone.utc)
+    assert snapshot.data_end == datetime(2026, 5, 11, 8, tzinfo=timezone.utc)
+
+
 def test_cur_service_returns_setup_required_without_session(tmp_path) -> None:
     service = CurDataExportService(
         profile_name="dev",

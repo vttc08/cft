@@ -882,9 +882,6 @@ class CftApp(App[None]):
         self.usage_by_distribution = snapshot.usage_by_distribution
         self.billing_snapshot = snapshot.billing
         self.configuration = snapshot.configuration
-        for warning in result.warnings:
-            if warning.stage == "billing":
-                self._set_status(f"CUR billing unavailable: {warning.message}")
 
         self._refresh_distribution_table()
         self._refresh_summary()
@@ -902,6 +899,19 @@ class CftApp(App[None]):
             message = f"Refreshed CloudWatch usage and logs at {refreshed_at}"
             self._set_status(message)
             self.notify(message, title="cft refresh", severity="information", timeout=2.5)
+        for warning in result.warnings:
+            title = {
+                "billing": "CUR billing unavailable",
+                "s3_logs": "S3 upload analysis unavailable",
+            }.get(warning.stage, "Optional data source unavailable")
+            message = f"{title}: {warning.message}"
+            self._set_status(message)
+            self.notify(
+                warning.message,
+                title=title,
+                severity="warning",
+                timeout=8,
+            )
         self.application.write_startup_trace()
 
     def _set_loading_state(self, loading: bool, message: str) -> None:

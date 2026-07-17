@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Callable
 
 import boto3
-import duckdb
 from botocore.exceptions import ClientError
 
 from cft.cache.policies import CachePolicy, utc_now
@@ -17,6 +16,7 @@ from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import AppSettings, load_app_settings, settings_profile_name
 from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceMetrics
 from cft.models.inventory import CloudFrontInventory
+from cft.parquet import ParquetQueryEngine, build_parquet_query_engine
 from cft.startup_trace import StartupTrace
 
 SessionFactory = Callable[..., boto3.Session]
@@ -55,6 +55,7 @@ class CloudFrontS3LogsUploadService:
         now: Callable[[], datetime] = utc_now,
         trace: StartupTrace | None = None,
         state_repository: ProfileStateRepository | None = None,
+        query_engine: ParquetQueryEngine | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.region_name = region_name
@@ -64,6 +65,7 @@ class CloudFrontS3LogsUploadService:
         self.now = now
         self.trace = trace
         self.state_repository = state_repository or ProfileStateRepository(self.paths)
+        self.query_engine = query_engine or build_parquet_query_engine(trace=trace)
 
     def load(
         self,
@@ -420,36 +422,29 @@ class CloudFrontS3LogsUploadService:
             / filename
         )
 
-    @staticmethod
-    def _query_summary(local_parquet_files: list[Path]) -> dict[str, int]:
+    def _query_summary(self, local_parquet_files: list[Path]) -> dict[str, int]:
         if not local_parquet_files:
             return {}
 
-        connection = duckdb.connect(database=":memory:")
-        try:
-            connection.read_parquet([str(path) for path in local_parquet_files]).create_view("data")
-            rows = connection.execute(
-                """
-                SELECT
-                  "DistributionId" AS distribution_id,
-                  COALESCE(SUM("cs-bytes"), 0) AS upload_bytes
-                FROM data
-                WHERE "DistributionId" IS NOT NULL
-                GROUP BY "DistributionId"
-                """
-            ).fetchall()
-        finally:
-            connection.close()
+        rows = self.query_engine.query(
+            local_parquet_files,
+            """
+            SELECT
+              "DistributionId" AS distribution_id,
+              COALESCE(SUM("cs-bytes"), 0) AS upload_bytes
+            FROM data
+            WHERE "DistributionId" IS NOT NULL
+            GROUP BY "DistributionId"
+            """,
+        )
 
         totals: dict[str, int] = {}
         for row in rows or []:
-            if not row:
-                continue
-            distribution_id = str(row[0]).strip()
+            distribution_id = str(row.get("distribution_id", "")).strip()
             if not distribution_id:
                 continue
             try:
-                totals[distribution_id] = int(float(row[1]))
+                totals[distribution_id] = int(float(row.get("upload_bytes", 0)))
             except (TypeError, ValueError):
                 continue
         return totals

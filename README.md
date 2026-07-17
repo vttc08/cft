@@ -15,6 +15,28 @@ uv run cft startup-profile --profile default
 
 The project uses a `src/` layout and is packaged via `pyproject.toml`.
 
+### Termux / Android
+
+`cft` supports the current Termux Python packages (Python 3.13 or newer). Update an older
+Termux installation and install the native DuckDB CLI before starting the app:
+
+```bash
+pkg upgrade
+pkg install python duckdb
+python -c "import sys; print(sys.version); print(sys.platform)"
+duckdb -version
+uv run cft
+```
+
+On Android, `uv` does not install or build the DuckDB Python module. `cft` calls the Termux
+`duckdb` executable for local CUR and CloudFront S3-log Parquet aggregates instead. On Linux,
+macOS, and Windows, the installed DuckDB Python module remains the preferred backend.
+
+If the Termux CLI is missing or cannot execute a query, the TUI still loads inventory and
+CloudWatch data and shows an actionable warning for the unavailable Parquet-backed feature.
+Keep the default `~/.cft` data location where possible; Android shared storage can have scoped
+storage, permission, and performance limitations.
+
 ## Architecture
 
 `cft` separates frontend rendering from AWS and persistence work:
@@ -23,6 +45,8 @@ The project uses a `src/` layout and is packaged via `pyproject.toml`.
 - `cft.bootstrap` constructs boto3-backed adapters and launches the selected frontend.
 - AWS, CloudWatch Logs, S3 logs, and Data Export services share the profile-scoped state
   repository and retain their existing cache policies.
+- CUR and S3-log services share a portable Parquet query interface backed by the DuckDB Python
+  module on desktop systems and the DuckDB CLI on Termux.
 - `cft.tui` consumes immutable application snapshots and owns only Textual interaction,
   formatting, and responsive layout behavior. Blocking discovery and refresh work runs in
   Textual workers.
@@ -30,6 +54,8 @@ The project uses a `src/` layout and is packaged via `pyproject.toml`.
 The profile `state.json` file is canonical internal storage, not a public JSON API. Future CLI
 JSON output should use a separately documented serializer over the same application snapshots.
 See [ADR-001](docs/decisions/001-typed-application-facade.md) for the decision and trade-offs.
+See [ADR-002](docs/decisions/002-portable-duckdb-backends.md) for the portable DuckDB backend
+decision.
 
 Use `uv run cft` and `uv run cft dev` from the repo root when you are not
 activating the virtual environment manually.

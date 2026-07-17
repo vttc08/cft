@@ -20,6 +20,7 @@ from cft.models.cache import DistributionCacheRecord, ProfileCacheState, SourceM
 from cft.models.configuration import SaveCloudWatchLogs
 from cft.models.distribution import DistributionSummary
 from cft.models.inventory import AccountIdentity, CloudFrontInventory
+from cft.parquet import ParquetQueryError
 
 
 def inventory() -> CloudFrontInventory:
@@ -50,6 +51,14 @@ class Loader:
     def load(self, *args: object, refresh: bool = False) -> object:
         self.refreshes.append(refresh)
         return self.value
+
+
+class FailingLoader:
+    def __init__(self, error: Exception) -> None:
+        self.error = error
+
+    def load(self, *args: object, refresh: bool = False) -> object:
+        raise self.error
 
 
 def test_application_orchestrates_and_merges_source_usage(tmp_path) -> None:
@@ -125,6 +134,49 @@ def test_application_uses_cloudwatch_upload_without_log_services(tmp_path) -> No
     assert result.snapshot.usage_by_distribution["E123"].upload == 2
     assert application.s3_logs_upload_service.refreshes == []
     assert application.logs_upload_service.refreshes == []
+
+
+def test_application_keeps_usage_when_s3_parquet_backend_is_unavailable(tmp_path) -> None:
+    paths = AppPaths.from_base(tmp_path / "cft")
+    application = CftApplicationService(profile_name="dev", paths=paths)
+    application._reload_settings = lambda: None  # type: ignore[method-assign]
+    application.inventory_service = Loader(inventory())
+    application.usage_service = Loader(
+        CloudFrontUsageSnapshot(
+            profile_name="dev",
+            usage_by_distribution={
+                "E123": SourceMetrics(download=123, requests=456)
+            },
+            from_cache=True,
+        )
+    )
+    application.s3_logs_upload_service = FailingLoader(
+        ParquetQueryError(
+            "DuckDB CLI is required; run 'pkg install duckdb' and retry."
+        )
+    )
+    application.logs_upload_service = Loader(
+        CloudFrontLogsUploadSnapshot(
+            profile_name="dev",
+            upload_by_distribution={"E123": SourceMetrics(upload=999)},
+            from_cache=True,
+        )
+    )
+    application.billing_service = Loader(
+        BillingSnapshot(profile_name="dev", configured=False, from_cache=True)
+    )
+
+    result = application.load_dashboard()
+
+    assert result.snapshot.usage_by_distribution["E123"] == SourceMetrics(
+        download=123,
+        upload=999,
+        requests=456,
+    )
+    assert result.usage_from_cache is False
+    assert len(result.warnings) == 1
+    assert result.warnings[0].stage == "s3_logs"
+    assert "pkg install duckdb" in result.warnings[0].message
 
 
 def test_configuration_save_rebuilds_services_with_current_settings(tmp_path) -> None:

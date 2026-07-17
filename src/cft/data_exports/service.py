@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Callable
 
 import boto3
-import duckdb
 from botocore.exceptions import ClientError
 
-from cft.cache.policies import CachePolicy, utc_now
+from cft.cache.policies import CachePolicy, parse_utc_datetime, utc_now
 from cft.cache.repository import ProfileStateRepository
 from cft.config.paths import AppPaths, get_app_paths
 from cft.config.settings import (
@@ -23,6 +22,7 @@ from cft.config.settings import (
 )
 from cft.models.cache import ProfileSummaryCache
 from cft.models.billing import BillingSnapshot
+from cft.parquet import ParquetQueryEngine, build_parquet_query_engine
 from cft.startup_trace import StartupTrace
 
 SessionFactory = Callable[..., boto3.Session]
@@ -82,6 +82,7 @@ class CurDataExportService:
         now: Callable[[], datetime] = utc_now,
         trace: StartupTrace | None = None,
         state_repository: ProfileStateRepository | None = None,
+        query_engine: ParquetQueryEngine | None = None,
     ) -> None:
         self.profile_name = profile_name
         self.paths = paths or get_app_paths()
@@ -90,6 +91,7 @@ class CurDataExportService:
         self.now = now
         self.trace = trace
         self.state_repository = state_repository or ProfileStateRepository(self.paths)
+        self.query_engine = query_engine or build_parquet_query_engine(trace=trace)
 
     def load(self, *, refresh: bool = False) -> BillingSnapshot:
         settings = self.settings or load_app_settings(
@@ -355,31 +357,24 @@ class CurDataExportService:
         filename = Path(remote_key).name
         return self.paths.parquet_month_dir(profile_name, month_key) / f"{digest}-{filename}"
 
-    @staticmethod
-    def _query_summary(local_parquet_files: list[Path]) -> BillingSnapshot:
+    def _query_summary(self, local_parquet_files: list[Path]) -> BillingSnapshot:
         if not local_parquet_files:
             return BillingSnapshot(profile_name="default", configured=True)
 
-        connection = duckdb.connect(database=":memory:")
-        try:
-            connection.read_parquet([str(path) for path in local_parquet_files]).create_view("data")
-            row = connection.execute(SUMMARY_SQL).fetchone()
-        finally:
-            connection.close()
-
-        if row is None:
+        rows = self.query_engine.query(local_parquet_files, SUMMARY_SQL)
+        if not rows:
             return BillingSnapshot(profile_name="default", configured=True)
 
-        download_gb, upload_gb, requests, cost, data_start, data_end = row
+        row = rows[0]
         return BillingSnapshot(
             profile_name="default",
             configured=True,
-            download_bytes=CurDataExportService._usage_gb_to_bytes(download_gb),
-            upload_bytes=CurDataExportService._usage_gb_to_bytes(upload_gb),
-            requests=CurDataExportService._count_to_int(requests),
-            cost=float(cost) if cost is not None else None,
-            data_start=CurDataExportService._coerce_optional_utc(data_start),
-            data_end=CurDataExportService._coerce_optional_utc(data_end),
+            download_bytes=CurDataExportService._usage_gb_to_bytes(row.get("download_gb")),
+            upload_bytes=CurDataExportService._usage_gb_to_bytes(row.get("upload_gb")),
+            requests=CurDataExportService._count_to_int(row.get("requests")),
+            cost=float(row["cost"]) if row.get("cost") is not None else None,
+            data_start=CurDataExportService._coerce_optional_utc(row.get("data_start")),
+            data_end=CurDataExportService._coerce_optional_utc(row.get("data_end")),
         )
 
     @staticmethod
@@ -426,9 +421,9 @@ class CurDataExportService:
 
     @staticmethod
     def _coerce_optional_utc(value: object) -> datetime | None:
-        if not isinstance(value, datetime):
-            return None
-        return CurDataExportService._coerce_utc(value)
+        if isinstance(value, datetime):
+            return CurDataExportService._coerce_utc(value)
+        return parse_utc_datetime(value)
 
     @staticmethod
     def _coerce_utc(value: datetime) -> datetime:

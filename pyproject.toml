@@ -10,8 +10,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "boto3>=1.34",
-  "duckdb>=1.0",
-  "pydantic-settings>=2.2",
+  "duckdb>=1.0; sys_platform != 'android'",
   "rich>=13.7",
   "textual>=0.80",
   "tomlkit>=0.13",
